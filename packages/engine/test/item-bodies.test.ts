@@ -305,14 +305,18 @@ describe('宿主：快照里截掉，磁盘和广播的是完整的', () => {
       t.apply({ type: 'item_completed', item: user('u1', 'AAAA') })
       t.apply({ type: 'turn_started', turnId: 'turn' })
       t.apply({ type: 'item_started', item: tool('t1', 'BBBB', 'running') })
-      expect(t.host.open(t.record.id).items).toEqual([cutItem(user('u1', 'AAAA')), tool('t1', 'BBBB', 'running')])
+      const stepTiming = sent(t.events, 't1')[0]?.stepTiming
+      expect(stepTiming?.start).toEqual(expect.any(Number))
+      const running = { ...tool('t1', 'BBBB', 'running'), stepTiming }
+      const completed = { ...tool('t1', 'BBBB'), stepTiming }
+      expect(t.host.open(t.record.id).items).toEqual([cutItem(user('u1', 'AAAA')), running])
       expect(sent(t.events, 'u1')).toEqual([user('u1', 'AAAA')])
       t.apply({ type: 'turn_completed', turnId: 'turn', outcome: 'completed', error: null })
-      expect(t.host.open(t.record.id).items[1]).toEqual(cutItem(tool('t1', 'BBBB')))
+      expect(t.host.open(t.record.id).items[1]).toEqual(cutItem(completed))
       // u1 一行；t1 开始一行、收尾一行
       expect(t.lines()).toEqual(['u1', 't1', 't1'])
-      expect(rawLines(t.record.id)).toEqual([user('u1', 'AAAA'), tool('t1', 'BBBB', 'running'), tool('t1', 'BBBB')])
-      expect(t.host.item(t.record.id, 't1')).toEqual(tool('t1', 'BBBB'))
+      expect(rawLines(t.record.id)).toEqual([user('u1', 'AAAA'), running, completed])
+      expect(t.host.item(t.record.id, 't1')).toEqual(completed)
       // 整份换掉（加载更早的）：快照里截
       t.apply({ type: 'items_reset', items: [user('u0', 'CCCC'), ...t.host.open(t.record.id).items] })
       expect(t.host.open(t.record.id).items[0]).toEqual(cutItem(user('u0', 'CCCC')))
