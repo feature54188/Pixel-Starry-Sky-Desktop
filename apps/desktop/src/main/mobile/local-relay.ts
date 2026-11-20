@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { networkInterfaces } from 'node:os'
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
@@ -5,6 +6,8 @@ import { createServer as createSecureServer } from 'node:https'
 import { extname, join, resolve, sep } from 'node:path'
 import { WebSocketServer, type WebSocket } from 'ws'
 import { decodeFrame, decodeJson, FrameType } from '@pixelsky/link'
+
+const DEFAULT_MOBILE_PORT = 9080
 
 export function localPhoneId(publicKey: string): string {
   return 'local-' + publicKey.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 56)
@@ -21,6 +24,7 @@ function lanAddress(): string | null {
 /** 桌面端局域网手机连接。帧内容仍由 MobileGateway 做配对、Noise 握手和权限校验。 */
 export class LocalMobileRelay {
   private server: Server | null = null
+  private ready: Promise<void> = Promise.resolve()
   private socketsServer: WebSocketServer | null = null
   private readonly sockets = new Map<string, WebSocket>()
   private readonly tokens = new Set<string>()
@@ -40,7 +44,7 @@ export class LocalMobileRelay {
   private readonly tls?: { cert: string; key: string }
 
   async start(): Promise<void> {
-    if (this.server) return
+    if (this.server) return this.ready
     const handler = (
       request: import('node:http').IncomingMessage,
       response: import('node:http').ServerResponse,
@@ -91,12 +95,6 @@ export class LocalMobileRelay {
     })
     this.server = server
     this.socketsServer = sockets
-    await new Promise<void>((resolvePromise, reject) => {
-      server.once('listening', resolvePromise)
-      server.once('error', reject)
-      server.listen(0, '0.0.0.0')
-    })
-    this.port = (server.address() as { port: number }).port
     sockets.on('connection', (socket, request) => {
       const protocols = String(request.headers['sec-websocket-protocol'] ?? '')
         .split(',')
@@ -136,6 +134,25 @@ export class LocalMobileRelay {
         }
       })
     })
+    this.ready = this.listen(server)
+    return this.ready
+  }
+
+  private async listen(server: Server): Promise<void> {
+    for (let port = DEFAULT_MOBILE_PORT; this.server === server; port++) {
+      try {
+        server.listen(port, '0.0.0.0')
+        await once(server, 'listening')
+      } catch (error) {
+        if (this.server !== server) return
+        if ((error as NodeJS.ErrnoException).code === 'EADDRINUSE' && port < 65535) continue
+        this.close()
+        throw error
+      }
+      if (this.server === server) this.port = port
+      else server.close()
+      return
+    }
   }
 
   prepare(secret: string): { relay: string; web: string } | null {
@@ -174,7 +191,8 @@ export class LocalMobileRelay {
     this.tokens.clear()
     this.tokenPhones.clear()
     this.socketsServer?.close()
-    this.server?.close()
+    // 还在绑定时由 listen 在绑定完成后关闭，避免留下一个等不到 listening 事件的启动请求。
+    if (this.port) this.server?.close()
     this.server = null
     this.socketsServer = null
     this.port = 0

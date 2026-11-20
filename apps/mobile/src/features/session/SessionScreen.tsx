@@ -162,22 +162,21 @@ export function SessionScreen({
   const retryId = canAct && snapshot ? retryNoticeId(snapshot.items, running, snapshot.queue.length) : null
   // 同一条错误再点「重试」沿用上次的 ID（上次可能已进电脑的队列、只是回应丢了，data/retry.ts）；换了一条错误才换新的
   const retryAttempt = useRef<SendAttempt | null>(null)
-  const retry = useCallback(() => {
+  const retry = useCallback(async () => {
     if (!link || retrying || !retryId) return
     setRetrying(true)
     setRetryError(null)
-    const text = retryMessage()
-    const current = attemptFor(retryAttempt.current, sendKey(`${sessionId}/${retryId}`, text, []), () =>
-      crypto.randomUUID(),
-    )
-    retryAttempt.current = current
-    link
-      .call('engine:send', sessionId, { text, clientMessageId: current.id })
-      .then(() => {
-        if (retryAttempt.current === current) retryAttempt.current = null
-      })
-      .catch((e: Error) => setRetryError(e.message))
-      .finally(() => setRetrying(false))
+    try {
+      const text = retryMessage()
+      const current = attemptFor(retryAttempt.current, sendKey(`${sessionId}/${retryId}`, text, []))
+      retryAttempt.current = current
+      await link.call('engine:send', sessionId, { text, clientMessageId: current.id })
+      if (retryAttempt.current === current) retryAttempt.current = null
+    } catch (e) {
+      setRetryError((e as Error).message)
+    } finally {
+      setRetrying(false)
+    }
   }, [link, retrying, retryId, sessionId])
   // 引用稳定：EntryView 是 memo 的，流式时每包只重画变了的那条（性能审核 B9）
   const actions = useMemo<TurnActions>(

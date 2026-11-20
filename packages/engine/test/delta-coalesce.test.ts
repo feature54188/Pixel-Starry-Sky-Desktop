@@ -1,5 +1,5 @@
 // 文字增量合并：同一块 stdout 里连续的增量合成一条再应用 / 广播，且不越过其他事件
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { EngineEvent, HostEvent } from '@pixelsky/protocol'
 import type { HostContext, Runtime } from '../src/host/context'
 import { HostEvents } from '../src/host/events'
@@ -45,6 +45,28 @@ const delta = (itemId: string, d: string, field: 'text' | 'output' = 'text'): En
   itemId,
   field,
   delta: d,
+})
+
+it('记录步骤的起止时间，重复事件不会延长用时，只有完成事件时不补造起点', () => {
+  const t = setup()
+  const item = { kind: 'file_change', id: 'file', changes: [], status: 'running' } as const
+  const time = vi.spyOn(Date, 'now').mockReturnValue(1000)
+  try {
+    t.events.apply('a', { type: 'item_started', item: { ...item, changes: [] } })
+    time.mockReturnValue(1020)
+    t.events.apply('a', { type: 'item_started', item: { ...item, changes: [] } })
+    const completed = { ...item, status: 'completed' as const, changes: [] }
+    time.mockReturnValue(1250)
+    t.events.apply('a', { type: 'item_completed', item: completed })
+    time.mockReturnValue(5000)
+    t.events.apply('a', { type: 'item_completed', item: completed })
+    t.events.apply('a', { type: 'item_completed', item: { ...completed, id: 'unknown' } })
+    const items = t.runtimes.get('a')!.snapshot.items
+    expect(items.find(i => i.id === 'file')?.stepTiming).toEqual({ start: 1000, end: 1250 })
+    expect(items.find(i => i.id === 'unknown')?.stepTiming).toBeUndefined()
+  } finally {
+    time.mockRestore()
+  }
 })
 
 describe('文字增量合并', () => {

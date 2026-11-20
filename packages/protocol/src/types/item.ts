@@ -121,6 +121,8 @@ export interface ItemReview {
 }
 
 export type Item = ItemVariant & {
+  /** 桌面观察到的工具步骤起止时间（Unix 毫秒）；旧记录、只有结果的步骤可能缺少计时。 */
+  stepTiming?: { start: number; end?: number }
   /**
    * 大字段（图片数据、长输出）在内存里截掉了，要完整内容时按 id 从磁盘读回（itemCut.ts、Store.body、engine:item）。
    * 永不写盘：写条目文件前 Store 先补全，补不全就不写

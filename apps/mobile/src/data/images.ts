@@ -5,6 +5,7 @@
 import { useCallback, useState } from 'react'
 import type { ImageAttachment } from '@pixelsky/protocol'
 import { L } from '@/i18n'
+import { newClientId } from './clientId'
 
 /** 一条消息最多几张（和电脑一样） */
 export const MAX_IMAGES = 5
@@ -67,7 +68,7 @@ export async function compressImage(file: File, budget: number): Promise<ImageAt
       const blob = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', quality))
       if (!blob || blob.size > budget) continue
       const image: ImageAttachment = {
-        id: crypto.randomUUID(),
+        id: newClientId(),
         name: jpegName(file.name),
         mediaType: 'image/jpeg',
         bytes: blob.size,

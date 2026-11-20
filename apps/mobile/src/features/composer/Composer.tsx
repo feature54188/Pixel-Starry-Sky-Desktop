@@ -52,17 +52,16 @@ export function Composer({
     if (!link || (!value && !attachments.length)) return
     setBusy(true)
     setError(null)
-    const current = attemptFor(
-      attempt.current,
-      sendKey(
-        sessionId,
-        value,
-        attachments.map(i => i.id),
-      ),
-      () => crypto.randomUUID(),
-    )
-    attempt.current = current
     try {
+      const current = attemptFor(
+        attempt.current,
+        sendKey(
+          sessionId,
+          value,
+          attachments.map(i => i.id),
+        ),
+      )
+      attempt.current = current
       await link.call('engine:send', sessionId, {
         text: value,
         clientMessageId: current.id,

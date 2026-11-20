@@ -43,7 +43,14 @@ export function retryNoticeId(items: readonly Item[], running: boolean, queued: 
 /** 点「重试」时发的话（同桌面：接着出错前的上下文做） */
 export const retryMessage = (): string => L('继续', 'Continue')
 
-/** 一段时间说成「N 秒」「M 分 S 秒」 */
+/** 摘要行：短于一秒直接显示毫秒，长于一分钟按分、秒显示。 */
+export function processDuration(ms: number | null): string {
+  if (ms === null || ms < 0) return ''
+  if (ms < 1000) return `${Math.round(ms)} ms`
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`
+  return spanText(ms)
+}
+
 function spanText(ms: number): string {
   const s = Math.max(1, Math.round(ms / 1000))
   if (s < 60) return L(`${s} 秒`, `${s}s`)
@@ -51,14 +58,30 @@ function spanText(ms: number): string {
 }
 
 /** 主智能体的步数：命令、工具、改文件（不含子智能体名下的步骤、派出子智能体的调用本身、思考、待办、提示） */
+function isMainStep(i: Item): boolean {
+  return (i.kind === 'command' || i.kind === 'file_change' || (i.kind === 'tool' && i.tool !== 'task')) && !i.subagent
+}
+
 export function stepCount(items: readonly Item[]): number {
-  let steps = 0
-  for (const i of items) {
-    if (i.kind === 'command' || i.kind === 'file_change') {
-      if (!i.subagent) steps++
-    } else if (i.kind === 'tool' && i.tool !== 'task' && !i.subagent) steps++
+  return items.filter(isMainStep).length
+}
+
+/** 只计本段步骤实际运行的区间。缺少任一步的起止记录时不报部分用时。 */
+export function stepDurationMs(items: readonly Item[]): number | null {
+  const intervals = []
+  for (const item of items.filter(isMainStep)) {
+    const timing = item.stepTiming
+    if (!timing || timing.end === undefined || timing.end < timing.start) return null
+    intervals.push({ start: timing.start, end: timing.end })
   }
-  return steps
+  if (!intervals.length) return null
+  let total = 0
+  let lastEnd = -Infinity
+  for (const { start, end } of intervals.sort((a, b) => a.start - b.start)) {
+    total += Math.max(0, end - Math.max(start, lastEnd))
+    lastEnd = Math.max(lastEnd, end)
+  }
+  return total
 }
 
 /**

@@ -5,7 +5,15 @@
 import { memo, useEffect, useState, type ReactNode } from 'react'
 import { Check, ChevronRight, CircleAlert, FileText, ListTodo, RotateCcw, X } from 'lucide-react'
 import type { Item, TurnEntry } from '@pixelsky/protocol'
-import { latestTodo, processLine, stepCount, stepTitle, thinkingLabel } from '@/data/turns'
+import {
+  latestTodo,
+  processDuration,
+  processLine,
+  stepCount,
+  stepDurationMs,
+  stepTitle,
+  thinkingLabel,
+} from '@/data/turns'
 import { L } from '@/i18n'
 import { Button, Dot, Spinner, Typing, cn } from '@/ui'
 import { CopyButton } from '@/ui/code'
@@ -270,9 +278,7 @@ function Process({
       ? steps
         ? L(`${steps} 步`, steps === 1 ? '1 step' : `${steps} steps`)
         : ''
-      : entry.durationMs
-        ? `${(entry.durationMs / 1000).toFixed(1)}s`
-        : ''
+      : processDuration(stepDurationMs(items))
   return (
     <div className="flex flex-col gap-2">
       <button

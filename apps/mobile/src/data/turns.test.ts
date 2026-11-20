@@ -3,9 +3,11 @@ import type { Item } from '@pixelsky/protocol'
 import {
   dividerText,
   latestTodo,
+  processDuration,
   processLine,
   retryNoticeId,
   stepCount,
+  stepDurationMs,
   stepTitle,
   thinkingLabel,
   timeDividers,
@@ -36,9 +38,23 @@ describe('turnDuration / stepTitle', () => {
     expect(stepTitle(cmd('x', '列出文件'))).toBe('列出文件')
     expect(stepTitle(cmd('x'))).toBe('ls')
   })
+
+  it('uses the unit appropriate to the duration beside the step count', () => {
+    expect(processDuration(null)).toBe('')
+    expect(processDuration(0)).toBe('0 ms')
+    expect(processDuration(250)).toBe('250 ms')
+    expect(processDuration(1000)).toBe('1.0 s')
+    expect(processDuration(1500)).toBe('1.5 s')
+    expect(processDuration(75_000)).toBe('1 分 15 秒')
+  })
 })
 
 describe('stepCount', () => {
+  it('only times this group of steps, excludes idle gaps and counts concurrent work once', () => {
+    const step = (id: string, start: number, end: number) => ({ ...cmd(id), stepTiming: { start, end } })
+    expect(stepDurationMs([step('a', 1010, 1110), step('b', 1000, 1050), step('c', 5000, 5140)])).toBe(250)
+    expect(stepDurationMs([step('a', 1010, 1110), cmd('historical')])).toBeNull()
+  })
   it('counts main-agent commands and tools, not thinking or empty process', () => {
     expect(stepCount([think('a', ' '), cmd('b'), cmd('c')])).toBe(2)
     expect(stepCount([])).toBe(0)

@@ -102,7 +102,7 @@ export function NewTask({
         created.current = { key: target, sessionId: record.id }
       }
       const sessionId = created.current.sessionId
-      const current = attemptFor(attempt.current, sendKey(sessionId, value, ids), () => crypto.randomUUID())
+      const current = attemptFor(attempt.current, sendKey(sessionId, value, ids))
       attempt.current = current
       await link.call('engine:send', sessionId, {
         text: value,

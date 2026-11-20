@@ -2,6 +2,7 @@
 // 你的消息是右侧灰色气泡，回复是正文；过程运行中一步一行列出来，做完折成「已完成 · 摘要」一行、点开就地展开；
 // 一轮结束后回复下面一行「复制 … 用时 · 步数 · 用量」，改了文件再接一张改动卡片；出错的那条提示下面有「重试」。
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
@@ -96,15 +97,33 @@ IconData stepIcon(Item item) => switch (item.kind) {
 };
 
 /// 主智能体的步数：命令、工具、改文件（不含子智能体名下的、派出子智能体的调用本身）
-int stepCount(List<Item> items) => items
-    .where(
-      (i) =>
-          (i.kind == 'command' ||
-              i.kind == 'file_change' ||
-              (i.kind == 'tool' && i.tool != 'task')) &&
-          !truthy(i['subagent']),
-    )
-    .length;
+bool _isMainStep(Item i) =>
+    (i.kind == 'command' ||
+        i.kind == 'file_change' ||
+        (i.kind == 'tool' && i.tool != 'task')) &&
+    !truthy(i['subagent']);
+
+int stepCount(List<Item> items) => items.where(_isMainStep).length;
+
+num? _stepDurationMs(List<Item> items) {
+  final intervals = <(num, num)>[];
+  for (final item in items.where(_isMainStep)) {
+    final timing = obj(item['stepTiming']);
+    final start = timing['start'];
+    final end = timing['end'];
+    if (start is! num || end is! num || end < start) return null;
+    intervals.add((start, end));
+  }
+  if (intervals.isEmpty) return null;
+  intervals.sort((a, b) => a.$1.compareTo(b.$1));
+  num total = 0;
+  num lastEnd = double.negativeInfinity;
+  for (final (start, end) in intervals) {
+    total += math.max(0, end - math.max(start, lastEnd));
+    lastEnd = math.max(lastEnd, end);
+  }
+  return total;
+}
 
 /// 过程行的摘要：「4 步 · 改了 2 个文件 +40 −12 · 1 个子智能体 · 1 步失败」
 String processSummary(List<Item> items) {
@@ -1212,7 +1231,6 @@ class _ProcessBlockState extends State<ProcessBlock> {
         break;
       }
     }
-    final duration = entry.durationMs;
     if (entry.running) {
       final hidden = _all ? 0 : (steps.length - _recent).clamp(0, 1 << 30);
       return Padding(
@@ -1247,6 +1265,7 @@ class _ProcessBlockState extends State<ProcessBlock> {
       );
     }
     final failed = summarizeProcess(entry.items).failed > 0;
+    final duration = _stepDurationMs(entry.items);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Column(
@@ -1270,8 +1289,8 @@ class _ProcessBlockState extends State<ProcessBlock> {
                       [
                         L('已完成', 'Done'),
                         processSummary(entry.items),
-                        if (duration != null && duration >= 1000)
-                          spanText(duration),
+                        if (duration != null)
+                          duration < 1000 ? '${duration.round()} ms' : spanText(duration),
                       ].join(' · '),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,

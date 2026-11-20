@@ -98,6 +98,18 @@ export class HostEvents {
     const rt = ctx.runtimes.get(id)
     if (!rt) return
     const before = rt.snapshot.items
+    if (event.type === 'item_started' || event.type === 'item_completed') {
+      const item = event.item
+      if (item.kind === 'command' || item.kind === 'file_change' || item.kind === 'tool') {
+        const previous = before.findLast(i => i.id === item.id)?.stepTiming
+        const start =
+          previous?.start ?? (event.type === 'item_started' && item.status === 'running' ? Date.now() : undefined)
+        if (start !== undefined) {
+          const end = previous?.end ?? (item.status === 'running' ? undefined : Math.max(start, Date.now()))
+          event = { ...event, item: { ...item, stepTiming: { start, end } } }
+        }
+      }
+    }
     // 开始时也写一次：重开会话时条目按开始的先后排（和实时一致），没等到完成的也不会丢（读出时标成已中断）
     if (event.type === 'item_completed' || event.type === 'item_started') ctx.store.appendItem(id, event.item)
     // 磁盘上写完整的，快照里留截过的（图片数据、长输出）（docs/session-memory.md）；还在跑的不截。广播的仍是完整事件
