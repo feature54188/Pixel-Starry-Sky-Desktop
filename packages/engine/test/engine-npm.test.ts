@@ -2,8 +2,9 @@
 // 没装 Node.js 时让桌面端装私有的、Claude Code 官方安装器装不上时改用 npm
 import { readFileSync, writeFileSync } from 'node:fs'
 import { delimiter, join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClaudeAdapter } from '../src'
+import * as claudeDiscovery from '../src/claude/discover'
 import { installCodexWithNpm } from '../src/codex/update'
 import { NPM_MIRROR, npmForInstall, npmInstallGlobal, withPath, type NodeRuntime, type NpmTool } from '../src/npm'
 import { makeTmp, removeTmp } from './helpers/tmp'
@@ -109,6 +110,16 @@ describe('装新引擎用哪份 npm', () => {
 })
 
 describe('一键安装', () => {
+  it('官方安装器按系统用 PowerShell 或 bash 运行指定脚本', () => {
+    const windows = process.platform === 'win32'
+    const script = join(tmp(), windows ? 'install.ps1' : 'install.sh')
+    const launcher = claudeDiscovery.claudeInstaller({ ...process.env, PIXELSKY_CLAUDE_INSTALLER: script })
+    expect(launcher?.command).toMatch(windows ? /powershell\.exe$/i : /bash$/)
+    expect(launcher?.args).toEqual(
+      windows ? ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script] : [script],
+    )
+  })
+
   it('Codex：没有 Node.js 时先装私有的，再装到私有目录', async () => {
     const npm = fakeNpm(tmp())
     const { runtime, ensured } = fakeRuntime(npm.tool)
@@ -123,39 +134,26 @@ describe('一键安装', () => {
 
   it('Claude Code：官方安装器装不上时改用 npm，两次输出都留着', async () => {
     const dir = tmp()
-    const windows = process.platform === 'win32'
-    const installer = join(dir, windows ? 'install.ps1' : 'install.sh')
-    writeFileSync(
-      installer,
-      windows ? "Write-Output 'cannot reach claude.ai'; exit 3" : "echo 'cannot reach claude.ai'; exit 3",
-    )
     const npm = fakeNpm(dir)
     const { runtime, ensured } = fakeRuntime(npm.tool)
     const adapter = new ClaudeAdapter({
-      env: {
-        PATH: tmp(),
-        SystemRoot: process.env.SystemRoot,
-        // PowerShell 缺了这些（临时目录、用户目录）在 GitHub 的 Windows 机器上启动很慢，测试超时
-        ...(windows
-          ? {
-              TEMP: process.env.TEMP,
-              TMP: process.env.TMP,
-              USERPROFILE: process.env.USERPROFILE,
-              LOCALAPPDATA: process.env.LOCALAPPDATA,
-              APPDATA: process.env.APPDATA,
-            }
-          : {}),
-        PIXELSKY_CLAUDE_INSTALLER: installer,
-        ...(windows ? {} : { HOME: dir }),
-      },
+      env: { PATH: tmp(), SystemRoot: process.env.SystemRoot, HOME: dir },
       nodeRuntime: runtime,
     })
     const lines: string[] = []
-    const r = await adapter.install(l => lines.push(l))
-    expect(r.ok).toBe(true)
+    const installer = vi.spyOn(claudeDiscovery, 'claudeInstaller').mockReturnValueOnce({
+      command: process.execPath,
+      args: ['-e', "console.error('cannot reach claude.ai'); process.exitCode = 3"],
+    })
+    try {
+      const r = await adapter.install(l => lines.push(l))
+      expect(r.ok).toBe(true)
+    } finally {
+      installer.mockRestore()
+    }
     expect(ensured()).toBe(1)
+    expect(lines.join('\n')).toContain('cannot reach claude.ai')
     expect(lines).toContain('官方安装器没装成，改用 npm 安装 Claude Code')
     expect(npm.calls()[0]).toEqual(expect.arrayContaining(['@anthropic-ai/claude-code@latest']))
-    // 真起 PowerShell：GitHub 的机器上冷启动要十几秒
-  }, 60_000)
+  })
 })
