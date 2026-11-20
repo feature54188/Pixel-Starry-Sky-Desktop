@@ -33,6 +33,8 @@ const others: UsageGroupRow = { ...base, key: '__others__', others: 3 }
 // 重置模块并把「是否真实模式 / 会话列表」换成测试给的值
 async function render(rows: UsageGroupRow[], opts: { isLive: boolean; sessions: unknown[]; exists: string[] }) {
   vi.resetModules()
+  // GitHub runner 的系统语言可能是英文，测试固定中文以匹配断言文案。
+  vi.stubGlobal('navigator', { languages: ['zh-CN'], language: 'zh-CN' })
   vi.doMock('@/features/engine/hooks', () => ({ isLive: opts.isLive }))
   vi.doMock('@/features/engine/openRequests', () => ({ sessionExists: (id: string) => opts.exists.includes(id) }))
   vi.doMock('@/features/engine/store', () => ({ useEngineState: () => opts.sessions }))
@@ -54,7 +56,10 @@ describe('shortId', () => {
 })
 
 describe('分布表 › 会话', () => {
-  afterEach(() => vi.doUnmock('@/features/engine/hooks'))
+  afterEach(() => {
+    vi.doUnmock('@/features/engine/hooks')
+    vi.unstubAllGlobals()
+  })
 
   it('会话还在：显示标题和「项目 · 短 ID」', async () => {
     const html = await render([live], { isLive: true, sessions: [{}], exists: [live.sessionId!] })
