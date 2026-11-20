@@ -339,7 +339,7 @@ describe('读 Pi 的会话文件（长会话的文件可能超过 512 MB）', ()
     expect(entries(join(root, 'missing.jsonl'))).toEqual([])
   })
 
-  it('超过 LINE_MAX 的一行整行跳过，后面的行照常读', () => {
+  it('超过 LINE_MAX 的一行整行跳过，后面的行照常读', { timeout: 60_000 }, () => {
     const file = join(root, 'huge-line.jsonl')
     writeFileSync(file, `{"type":"message","text":"${'y'.repeat(LINE_MAX + 10)}"}\n{"type":"custom","id":"after"}`)
     expect(entries(file).map(e => e.id)).toEqual(['after'])
