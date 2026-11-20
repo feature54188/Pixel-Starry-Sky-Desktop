@@ -8,7 +8,7 @@ import * as ipc from '../ipc/guard'
 import { logger } from '@pixelsky/engine'
 import { WhatsNewStore, whatsNewPatch } from './whats-new'
 
-export const REPO_URL = 'https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop'
+export const REPO_URL = 'https://github.com/feature54188/Pixel-Starry-Sky-Desktop'
 
 const OS_NAMES: Record<string, string> = { win32: 'Windows', darwin: 'macOS', linux: 'Linux' }
 

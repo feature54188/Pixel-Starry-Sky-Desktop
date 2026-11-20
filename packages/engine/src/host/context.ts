@@ -5,6 +5,7 @@ import type {
   EngineId,
   ExtensionLaunch,
   HostEvent,
+  ApprovalRequest,
   PlatformCharge,
   PlatformSettlement,
   RemoteCall,
@@ -36,6 +37,8 @@ import type { HostUsage } from './usage'
 import type { NodeRuntime } from '../npm'
 
 export interface EngineHostOptions {
+  /** 通过独立审核模型审查原生权限请求；无法判定时返回 null，保留人工审批。 */
+  reviewApproval?: (record: SessionRecord, request: ApprovalRequest) => Promise<'allow' | 'deny' | null>
   /** 本机的系统代理（http://主机:端口）：补给引擎进程（env.ts systemProxyEnv）；远程机器上不传 */
   systemProxy?: (engine: EngineId) => string | null
   /** 本机的私有 Node.js：没装 Node.js 时一键安装 Codex / Claude Code 先装它（npm.ts）；远程机器上不传 */

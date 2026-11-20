@@ -80,6 +80,7 @@ export function initUpdater(ctx: AppContext): void {
     autoUpdater.autoDownload = !portable
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.allowPrerelease = state.beta
+    autoUpdater.allowDowngrade = false
     autoUpdater.logger = null
     if (feed) {
       autoUpdater.forceDevUpdateConfig = true

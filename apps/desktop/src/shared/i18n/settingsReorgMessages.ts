@@ -18,6 +18,12 @@ export const settingsReorgMessages = {
   'settingsAppearance.wallpaper': { zh: '壁纸与毛玻璃', en: 'Wallpaper and glass' },
   'settingsAppearance.motion': { zh: '动画', en: 'Motion' },
   'settingsEngines.shared': { zh: '所有引擎通用', en: 'All engines' },
+  'settingsEngines.autoReviewModel': { zh: '自动审核模型', en: 'Automatic review model' },
+  'settingsEngines.autoReviewModelHint': {
+    zh: 'Codex 自动审核、Claude Code 权限审批和应用内代码审查可共用此模型。默认由 Codex 和代码审查使用各自的模型，Claude Code 交由人工审批。',
+    en: 'Codex automatic reviews, Claude Code permission requests, and in-app code reviews can share this model. By default, Codex and code reviews use their own models, and Claude Code prompts for manual approval.',
+  },
+  'settingsEngines.autoReviewModelDefault': { zh: '默认', en: 'Default' },
   'settingsEngines.codexSession': { zh: '会话', en: 'Sessions' },
   'settingsEngines.factoryNoUltracode': {
     zh: '推理强度 High，Fast 关，显示思考摘要开',

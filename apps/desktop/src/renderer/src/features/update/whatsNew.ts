@@ -11,7 +11,7 @@ const files = import.meta.glob<string>('../../../../../../../.github/release-not
 })
 
 /** 说明里「（GitHub #12）」点开的地址 */
-export const issueUrl = (n: number): string => `https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/issues/${n}`
+export const issueUrl = (n: number): string => `https://github.com/feature54188/Pixel-Starry-Sky-Desktop/issues/${n}`
 
 export interface VersionNotes {
   version: string

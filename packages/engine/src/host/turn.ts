@@ -288,6 +288,12 @@ export class HostTurn {
       extensions,
       maxRetries,
       record: () => ({ ...m.sessions.runtime(id).snapshot.record, ...(m.sessions.runtime(id).execution ?? {}) }),
+      reviewApproval: request => {
+        const review = this.ctx.opts.reviewApproval
+        return review
+          ? review({ ...m.sessions.runtime(id).snapshot.record, ...(m.sessions.runtime(id).execution ?? {}) }, request)
+          : Promise.resolve(null)
+      },
       emit: e => m.events.onEngineEvent(id, e),
       runs: () => rt.snapshot.runs,
       setEngineSessionId: engineSessionId => {

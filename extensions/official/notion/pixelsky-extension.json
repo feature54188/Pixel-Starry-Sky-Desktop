@@ -7,7 +7,7 @@
   "icon": "icon.png",
   "keywords": ["notion", "docs", "mcp"],
   "license": "MIT",
-  "repository": "https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop",
+  "repository": "https://github.com/feature54188/Pixel-Starry-Sky-Desktop",
   "homepage": null,
   "engines": {
     "pixelsky": ">=0.7.0"

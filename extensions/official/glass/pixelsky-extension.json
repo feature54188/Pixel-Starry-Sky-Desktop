@@ -7,7 +7,7 @@
   "icon": "icon.png",
   "keywords": ["glass", "acrylic", "mica", "vibrancy", "毛玻璃", "透明"],
   "license": "MIT",
-  "repository": "https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop",
+  "repository": "https://github.com/feature54188/Pixel-Starry-Sky-Desktop",
   "homepage": null,
   "engines": { "pixelsky": ">=0.7.5" },
   "l10n": {

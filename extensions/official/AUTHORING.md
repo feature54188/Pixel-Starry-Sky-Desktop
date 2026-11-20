@@ -33,7 +33,7 @@ extensions/official/python/
   "icon": "icon.png",
   "keywords": ["python", "pytest", "uv"],
   "license": "MIT",
-  "repository": "https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop",
+  "repository": "https://github.com/feature54188/Pixel-Starry-Sky-Desktop",
   "homepage": null,
   "engines": { "pixelsky": ">=0.4.10" },
   "l10n": { "en": { "name": "Python Support", "description": "…" } },

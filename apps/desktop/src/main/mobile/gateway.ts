@@ -122,6 +122,7 @@ export interface GatewayDeps {
   store: Pick<MobileStore, 'desktopId' | 'device' | 'devices' | 'addDevice' | 'touch' | 'keypair'>
   desktopName(): string
   relay(): string
+  localRelay?: LocalRelay
   /** 手机网页版的地址：二维码做成这个地址的链接，手机相机扫了直接打开；null 时二维码是 pixelsky:// */
   web?(): string | null
   call: EngineCall
@@ -267,6 +268,10 @@ export interface CloudDevices {
   remove(phone: string): Promise<void>
   /** 网页推送（§22.2）：请云端推给这部手机；手机没登记推送时云端什么都不做 */
   push?(phone: string, payload: PushPayload): Promise<void>
+}
+
+export interface LocalRelay {
+  prepare(secret: string): { relay: string; web: string } | null
 }
 
 interface Peer {
@@ -998,12 +1003,13 @@ export class MobileGateway {
   async startPairing(): Promise<MobilePairing> {
     const key = this.d.store.keypair()
     if (!key) throw new Error('MOBILE_NO_CIPHER')
-    const relay = this.d.relay()
+    const secret = newPairingSecret()
+    const localRelay = this.d.localRelay?.prepare(secret)
+    const relay = localRelay?.relay ?? this.d.relay()
     if (!relay) throw new Error('MOBILE_BAD_RELAY')
     // 云端的配对码：手机拿它换设备令牌；二维码和配对码同时过期
-    const cloud = this.d.cloud ? await this.d.cloud.pairing() : null
-    const secret = newPairingSecret(),
-      expires = cloud ? Math.min(cloud.expiresAt, this.now() + PAIRING_TTL) : this.now() + PAIRING_TTL
+    const cloud = localRelay ? null : this.d.cloud ? await this.d.cloud.pairing() : null
+    const expires = cloud ? Math.min(cloud.expiresAt, this.now() + PAIRING_TTL) : this.now() + PAIRING_TTL
     const offer = encodeOffer(
       {
         v: LINK_VERSION,
@@ -1015,7 +1021,7 @@ export class MobileGateway {
         expires,
         ...(cloud ? { code: cloud.code } : {}),
       },
-      this.d.web?.() ?? undefined,
+      localRelay?.web ?? this.d.web?.() ?? undefined,
     )
     this.pairing = { secret, offer, expires, status: 'waiting', request: null }
     return this.pairingState()!
@@ -1030,7 +1036,7 @@ export class MobileGateway {
   /** 拒绝一部扫了码的手机：告诉它，并让云端作废它的设备令牌（尽力而为，云端的待确认设备 10 分钟后也会过期） */
   private reject(phone: string): void {
     this.pairResult(phone, 'rejected')
-    void this.d.cloud?.remove(phone).catch(() => {})
+    if (!phone.startsWith('local-')) void this.d.cloud?.remove(phone).catch(() => {})
   }
 
   /** 用户在电脑上确认或拒绝扫码的手机 */
@@ -1045,7 +1051,7 @@ export class MobileGateway {
       return
     }
     // 先让云端放行（待确认的手机只能发配对请求），再记下来、告诉手机
-    await this.d.cloud?.confirm(phone)
+    if (!phone.startsWith('local-')) await this.d.cloud?.confirm(phone)
     if (this.pairing !== p) return
     {
       this.d.store.addDevice({

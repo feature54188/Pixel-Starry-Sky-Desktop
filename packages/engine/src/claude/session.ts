@@ -879,10 +879,19 @@ export class ClaudeSession implements EngineSession {
       const toolUseId = str(r.tool_use_id) || null
       const suggestions = Array.isArray(r.permission_suggestions) ? r.permission_suggestions : []
       this.approvals.set(req.requestId, { toolName, input, toolUseId, suggestions })
-      this.ctx.emit({
-        type: 'approval_request',
-        request: approvalFor(req.requestId, toolName, input, toolUseId, this.ctx.record().cwd),
-      })
+      const approval = approvalFor(req.requestId, toolName, input, toolUseId, this.ctx.record().cwd)
+      const review = this.ctx.reviewApproval
+      if (review) {
+        void review(approval)
+          .then(decision => {
+            if (!this.approvals.has(req.requestId)) return
+            if (decision) this.answer(req.requestId, { type: decision })
+            else this.ctx.emit({ type: 'approval_request', request: approval })
+          })
+          .catch(() => {
+            if (this.approvals.has(req.requestId)) this.ctx.emit({ type: 'approval_request', request: approval })
+          })
+      } else this.ctx.emit({ type: 'approval_request', request: approval })
       return
     }
     // 其他请求（MCP 表单、对话框等）v1 不支持，回错误，免得 CLI 一直等

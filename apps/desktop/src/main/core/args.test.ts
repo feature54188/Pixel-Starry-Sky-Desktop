@@ -103,13 +103,23 @@ describe('shared argument checks', () => {
     expect(
       engineConfigPatch({
         subagentModel: 'gpt-x',
+        autoReviewModel: 'gpt-review',
         subagentEffort: 'high',
         inputPrediction: 'cheap',
         resetCreditAuto: auto,
       }),
-    ).toEqual({ subagentModel: 'gpt-x', subagentEffort: 'high', inputPrediction: 'cheap', resetCreditAuto: auto })
-    expect(engineConfigPatch({ subagentModel: null, subagentEffort: null, resetCreditAuto: null })).toEqual({
+    ).toEqual({
+      subagentModel: 'gpt-x',
+      autoReviewModel: 'gpt-review',
+      subagentEffort: 'high',
+      inputPrediction: 'cheap',
+      resetCreditAuto: auto,
+    })
+    expect(
+      engineConfigPatch({ subagentModel: null, autoReviewModel: null, subagentEffort: null, resetCreditAuto: null }),
+    ).toEqual({
       subagentModel: null,
+      autoReviewModel: null,
       subagentEffort: null,
       resetCreditAuto: null,
     })

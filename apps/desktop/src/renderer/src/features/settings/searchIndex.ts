@@ -256,6 +256,13 @@ export const SETTINGS_INDEX: SearchEntry[] = [
     },
   },
   { section: 'models', title: '菜单里显示的模型', keywords: '隐藏模型 管理模型 模型列表 显示' },
+  {
+    section: 'engines',
+    get title() {
+      return tr('settingsEngines.autoReviewModel')
+    },
+    keywords: '自动审核 自动审批 审批模型 Claude Code Codex approval autoreview',
+  },
   { section: 'engines', title: '请求重试', keywords: '重试 失败 临时错误 自动重试 retry' },
   {
     section: 'engines',

@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢建议！**一个 issue 只写一个功能**（一个功能可以分几个小点）。
-        提交前请先搜一下 [已有的 issue](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，已经有人提过的话，在那里点 👍 或补充就好。
+        提交前请先搜一下 [已有的 issue](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，已经有人提过的话，在那里点 👍 或补充就好。
 
   - type: dropdown
     id: area

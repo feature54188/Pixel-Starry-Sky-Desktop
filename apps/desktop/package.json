@@ -1,14 +1,14 @@
 {
   "name": "@pixelsky/desktop",
-  "version": "0.8.11-beta",
+  "version": "99.8.11-beta",
   "private": true,
   "description": "像素星空桌面端",
-  "homepage": "https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop",
+  "homepage": "https://github.com/feature54188/Pixel-Starry-Sky-Desktop",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:demo": "node scripts/dev.mjs --demo",
-    "build": "pnpm --filter @pixelsky/cli bundle && electron-vite build && electron-vite build --config electron.remote.config.ts",
+    "build": "pnpm --filter @pixelsky/cli bundle && pnpm --filter @pixelsky/mobile build && electron-vite build && electron-vite build --config electron.remote.config.ts",
     "preview": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "capture": "electron-vite build && node scripts/capture.mjs",

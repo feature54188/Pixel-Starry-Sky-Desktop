@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         感谢反馈！**一个 issue 只写一个问题**，几个问题请分开提，方便逐个跟进和关闭。
-        提交前请先搜一下 [已有的 issue](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，避免重复。
+        提交前请先搜一下 [已有的 issue](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，避免重复。
 
   - type: dropdown
     id: area

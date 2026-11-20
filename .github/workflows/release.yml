@@ -1,11 +1,11 @@
-# 发版：推 v* 标签（如 v0.1.0-beta.1）→ 在 Windows 上检查、建草稿 Release → Windows、macOS、Linux 各自打包，上传到同一个草稿。
+# feature54188/Pixel-Starry-Sky-Desktop 发版：推 v99.* 标签（如 v99.8.11-beta）→ 检查、建草稿 Release → Windows、macOS、Linux 各自打包，上传到同一个草稿。
 # 在 GitHub 的 Releases 页检查草稿、写好更新说明后点发布，用户那边才会收到更新（版本号带 - 的测试版自动标成预发布）。
 # 试打包：Actions 页手动运行（workflow_dispatch），三个系统照样检查、打包，安装包放在这次运行的 Artifacts 里，不建 Release。
 name: release
 
 on:
   push:
-    tags: ['v*']
+    tags: ['v99.*']
   workflow_dispatch:
 
 permissions:
@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   check:
+    if: github.repository == 'feature54188/Pixel-Starry-Sky-Desktop'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -41,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[].tag_name" | grep -qx "$GITHUB_REF_NAME"; then
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "$GITHUB_REF_NAME 的 Release 已存在"
           else
             pre=""
@@ -100,6 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pixelsky-${{ runner.os }}
+          if-no-files-found: error
           path: |
             apps/desktop/release/*.exe
             apps/desktop/release/*.dmg

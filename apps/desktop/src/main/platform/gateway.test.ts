@@ -221,6 +221,36 @@ describe('平台代理按引擎隔离 Responses 与 Messages', () => {
     expect(charged).toEqual([[tracked[0], '0b8f6d1e-4c3a-4e7b-9d2f-5a6b7c8d9e0f']])
   })
 
+  it('Codex 自动审核使用配置的独立模型转发', async () => {
+    const bodies: unknown[] = []
+    server = platformGateway({
+      sessions: new Map([['s', { recordId: 's', secret: 'local-secret' }]]),
+      record: () =>
+        ({
+          id: 's',
+          engine: 'codex',
+          model: 'gpt-6.2-sol',
+          platform: { groupId: '7', account: 'user' },
+        }) as SessionRecord,
+      account: () => 'user',
+      reviewModel: () => 'gpt-6.2-mini',
+      routeModels: async () => ['gpt-6.2-sol', 'gpt-6.2-mini'],
+      fetch: async (_path, init) => {
+        bodies.push(JSON.parse(String(init.body)))
+        return new Response('event: response.completed\ndata: {}\n\n')
+      },
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const response = await fetch('http://127.0.0.1:' + (server.address() as { port: number }).port + '/v1/responses', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer local-secret' },
+      body: JSON.stringify({ model: 'codex-auto-review', input: 'review' }),
+    })
+    expect(response.status).toBe(200)
+    expect(bodies).toEqual([{ model: 'gpt-6.2-mini', input: 'review' }])
+  })
+
   it('Messages 把 Claude Code 的身份头带给云端（Sub2api「仅限 Claude Code」分组靠它认终端）', async () => {
     let forwarded: Headers | null = null
     server = platformGateway({

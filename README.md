@@ -4,7 +4,7 @@
 
 ## 下载
 
-到 [Releases](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/releases) 下载。正式版有 Windows（安装版 exe）、macOS（dmg，Intel 和 Apple 芯片）、Linux（AppImage 和 deb）；带 `-beta` 的测试版目前只有 Windows。
+到 [Releases](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/releases) 下载。正式版和带 `-beta` 的测试版均由 GitHub Actions 打包 Windows（安装版 exe）、macOS（dmg，Intel 和 Apple 芯片）和 Linux（AppImage 和 deb）。
 
 还没有代码签名：
 
@@ -21,15 +21,15 @@
 
 ## 反馈
 
-遇到问题或想要新功能，到 [Issues](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/issues/new/choose) 提交，选一个模板：
+遇到问题或想要新功能，到 [Issues](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/issues/new/choose) 提交，选一个模板：
 
 - **问题反馈（Bug）**：软件出错、显示不对、和预期不一致。
 - **功能请求**：想要新功能，或改进现有功能。
 
 提交之前：
 
-1. 先更新到[最新版本](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/releases)，看问题是否已经修好。
-2. 搜一下[已有的 issue](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，有人提过就在那里补充。
+1. 先更新到[最新版本](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/releases)，看问题是否已经修好。
+2. 搜一下[已有的 issue](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/issues?q=is%3Aissue)，有人提过就在那里补充。
 3. 一个 issue 只写一个问题或一个功能。
 
 问题反馈请带上：
@@ -40,7 +40,7 @@
 
 也可以在应用里的「设置 › 反馈」提交：登录像素星空账号后，团队的回复会显示在那里。
 
-安全问题请不要公开提 issue，到[这里私下报告](https://github.com/xiaoheoxo/Pixel-Starry-Sky-Desktop/security/advisories/new)。
+安全问题请不要公开提 issue，到[这里私下报告](https://github.com/feature54188/Pixel-Starry-Sky-Desktop/security/advisories/new)。
 
 ## 从源码运行
 

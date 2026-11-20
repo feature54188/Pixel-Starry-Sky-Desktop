@@ -7,9 +7,10 @@ import { tr } from '../../../i18n/core'
 import { useEffect, useState } from 'react'
 import { CircleArrowUp, ChevronRight, CircleCheck, Download, Loader2 } from 'lucide-react'
 import type { EngineConfig, EngineConfigPatch, EngineId } from '@pixelsky/protocol'
-import { Button, EngineIcon, cn } from '@/ui'
+import { Button, EngineIcon, Select, cn } from '@/ui'
 import { bridge, isLive, useEngineState } from '@/features/engine'
-import { GroupTitle, SectionTitle } from '../SettingRow'
+import { useEngineCatalog } from '@/features/engine/catalog'
+import { GroupTitle, SectionTitle, SettingRow } from '../SettingRow'
 import { RequestRetrySettings } from '../models/RequestRetrySettings'
 import { EngineDetail } from './EngineDetail'
 import { openEngineDetail, useEngineDetail } from './nav'
@@ -97,10 +98,52 @@ export function EnginesSection() {
       </div>
       {/* 默认引擎在「模型通道 › 新对话用」里定，这里只显示角标（docs/ui/settings-reorg.md §3） */}
       <GroupTitle>{tr('settingsEngines.shared')}</GroupTitle>
+      {config && (
+        <AutoReviewModelSetting
+          value={config.codex.autoReviewModel}
+          onSave={autoReviewModel => save('codex', { autoReviewModel })}
+        />
+      )}
       {isLive && <SystemProxySettings />}
       <RequestRetrySettings />
       {isLive && <IdleReleaseSettings />}
     </section>
+  )
+}
+
+function AutoReviewModelSetting({
+  value,
+  onSave,
+}: {
+  value: string | null
+  onSave: (model: string | null) => Promise<void>
+}) {
+  const models = useEngineCatalog('codex')?.models ?? []
+  const [error, setError] = useState<string | null>(null)
+  const title = tr('settingsEngines.autoReviewModel')
+
+  return (
+    <SettingRow
+      title={title}
+      description={tr('settingsEngines.autoReviewModelHint')}
+      hint={error ? translateMessage(error) : undefined}
+      hintTone="danger"
+      control={
+        <Select
+          label={title}
+          value={value ?? ''}
+          onChange={model => {
+            setError(null)
+            void onSave(model || null).catch((err: Error) => setError(err.message))
+          }}
+          options={[
+            { value: '', label: tr('settingsEngines.autoReviewModelDefault') },
+            ...(value && !models.some(model => model.id === value) ? [{ value, label: value }] : []),
+            ...models.map(model => ({ value: model.id, label: model.label || model.id })),
+          ]}
+        />
+      }
+    />
   )
 }
 

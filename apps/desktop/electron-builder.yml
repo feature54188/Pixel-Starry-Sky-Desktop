@@ -20,6 +20,8 @@ asarUnpack:
 afterPack: build/after-pack.cjs
 # 托盘图标（docs/ui/tray.md §2.5）：运行时从 resources/tray 读，不进 asar
 extraResources:
+  - from: ../mobile/dist
+    to: mobile
   - from: build/tray
     to: tray
   # 预装扩展（预装主题、毛玻璃）
@@ -104,6 +106,8 @@ linux:
     - '!**/node_modules/node-pty/prebuilds/**'
   # 窗口图标（Linux 不从程序文件里取）
   extraResources:
+    - from: ../mobile/dist
+      to: mobile
     - from: build/icon.png
       to: icon.png
     # Linux 的 extraResources 会覆盖顶层的，命令行和预装扩展要再写一遍
@@ -125,10 +129,10 @@ deb:
     - libatspi2.0-0
     - libuuid1
     - libsecret-1-0
-# 更新源：GitHub Releases（CI 推 v* 标签时上传；本机 pnpm dist 不上传）
+# 更新源：GitHub Releases（CI 推 v99.* 标签时上传；本机 pnpm dist 不上传）
 publish:
   provider: github
-  owner: xiaoheoxo
+  owner: feature54188
   repo: Pixel-Starry-Sky-Desktop
   releaseType: draft
 # 测试版也只生成 latest.yml：electron-updater 在测试版 Release 里找不到 beta.yml 时会回落到 latest.yml

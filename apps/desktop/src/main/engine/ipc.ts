@@ -57,6 +57,7 @@ import { initProjectImport } from './project-import-ipc'
 import { SystemProxy } from './systemProxy'
 import { createNodeRuntime } from './node-runtime'
 import { initSessionStatus } from '../session-status'
+import { reviewClaudeApproval } from '../ai/ipc'
 
 export async function initEngine(ctx: AppContext): Promise<void> {
   ctx.providers = initProviders(ctx)
@@ -135,6 +136,8 @@ export async function initEngine(ctx: AppContext): Promise<void> {
     validateInput: record => validateQueuedInput(record, ctx.providers),
     // 订阅额度都用完时改用平台：挑线路和模型（docs/ui/engine-accounts.md §5.2）
     platformRoute: ({ engine, model }) => platformFallbackRoute(engine, model),
+    reviewApproval: (record, request) =>
+      record.engine === 'claude' ? reviewClaudeApproval(ctx, record, request) : Promise.resolve(null),
     priceRef: (record, model) =>
       // 上下文超过 200K 的自定义模型在 Claude Code 里叫「模型名[1m]」（docs/ui/custom-api.md §10）
       record.provider

@@ -2,6 +2,7 @@
 import type {
   AgentRuns,
   ApprovalDecision,
+  ApprovalRequest,
   Effort,
   ImageAttachment,
   FileAttachment,
@@ -53,6 +54,8 @@ export interface SessionContext {
   maxRetries?: number | null
   /** 当前的会话记录（cwd、设置、引擎会话 id 都从这里取最新值） */
   record(): SessionRecord
+  /** 自动审核权限请求；返回 null 时交给用户处理。 */
+  reviewApproval?(request: ApprovalRequest): Promise<'allow' | 'deny' | null>
   /**
    * 条目、审批、用量、一轮结束等事件。
    * 适配器不发 status / record 事件：运行状态和会话记录由 EngineHost 维护。

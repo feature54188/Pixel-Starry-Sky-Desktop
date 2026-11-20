@@ -387,6 +387,7 @@ export async function codexLaunchConfig(
       config(`model_providers.${provider}.stream_max_retries`, 0)
     }
   }
+  if (!gatewayProvider && options.autoReviewModel) config('auto_review_model_override', options.autoReviewModel)
   Object.assign(environment, ctx.extensions?.env)
   if (ctx.extensions?.pathDirs.length) {
     const key = Object.keys(environment).find(k => k.toLowerCase() === 'path') ?? 'PATH'

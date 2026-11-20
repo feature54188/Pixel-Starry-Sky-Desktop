@@ -3,7 +3,7 @@
 ;(() => {
   const { PLATFORMS, detect, fileOf, mb, fromGitHub, channels, headline, md } = globalThis.PSLib
   const { EN, FAQ } = globalThis.PSText
-  const REPO = 'xiaoheoxo/Pixel-Starry-Sky-Desktop'
+  const REPO = 'feature54188/Pixel-Starry-Sky-Desktop'
   const GH = `https://github.com/${REPO}`
   const $ = s => document.querySelector(s)
   const $$ = s => [...document.querySelectorAll(s)]

@@ -237,6 +237,16 @@ describe('本机引擎详情设置', () => {
     await expect(host.setEngineConfig('codex', { subagentEffort: 'ultra-x' as 'low' })).rejects.toThrow('推理强度不对')
   })
 
+  it('Codex 自动审核模型单独保存，清空后回到跟随会话', async () => {
+    const host = makeHost()
+    expect(host.engineConfig().codex.autoReviewModel).toBeNull()
+    await host.setEngineConfig('codex', { autoReviewModel: 'gpt-review-mini' })
+    expect(host.engineConfig().codex.autoReviewModel).toBe('gpt-review-mini')
+    await host.setEngineConfig('codex', { autoReviewModel: null })
+    expect(host.engineConfig().codex.autoReviewModel).toBeNull()
+    await expect(host.setEngineConfig('claude', { autoReviewModel: 'claude-haiku' })).rejects.toThrow('自动审核模型不对')
+  })
+
   it('「查看本机其他会话」：存 project / all，关闭时不存；每个引擎分开，值不对时报错', async () => {
     const host = makeHost()
     await host.setEngineConfig('codex', { peekSessions: 'project' })

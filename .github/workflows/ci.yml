@@ -1,5 +1,5 @@
 # 日常检查：提 PR（目标 main）或推到 main 时自动跑，不发版、不上传任何东西。
-# 和 release.yml 的区别：release.yml 只在推 v* 标签（或手动）时跑，三个系统打包并传到草稿 Release；
+# 和 release.yml 的区别：release.yml 在推 v99.* 标签（或手动）时跑，三个系统打包。
 # 这里只在 Windows 上做两件事：①和发版前一样的检查（类型、测试、ESLint、Prettier）；
 # ②打一次「不出安装包」的 Windows 试打包（electron-builder --dir，--publish never），让打包配置、随包命令行、node-pty 的问题在合并前就暴露，而不是等到打标签那天。
 name: ci

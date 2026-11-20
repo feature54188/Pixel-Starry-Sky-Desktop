@@ -99,6 +99,8 @@ export interface EngineOptions {
   subagentEffort?: Effort
   /** Codex 平台 / 自定义接口对话自动审核用的模型（docs/ui/codex-auto-review-model.md）；只存指定了的 */
   autoReviewModel?: string
+  /** 迁移早期的自动审核设置 */
+  reviewModel?: string
   /** Codex 输入预测；只存 cheap / same */
   inputPrediction?: 'cheap' | 'same'
   /** Codex 周限快到时自动用重置卡（docs/ui/codex-reset-card.md）；只存开着的 */

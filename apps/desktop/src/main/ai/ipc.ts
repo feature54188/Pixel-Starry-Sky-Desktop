@@ -4,6 +4,7 @@
 import { OneShotError } from '@pixelsky/engine'
 import { randomUUID } from 'node:crypto'
 import type { PlatformCharge, PlatformSettlement } from '@pixelsky/protocol'
+import type { ApprovalRequest, SessionRecord } from '@pixelsky/protocol'
 import {
   INLINE_EDIT_CONTEXT_LINES,
   INLINE_EDIT_INSTRUCTION_LIMIT,
@@ -27,7 +28,7 @@ import {
 import type { GitCommitContext } from '../../shared/types/project-tools'
 import type { AppContext } from '../app/context'
 import { platformFetch, signedInEmail } from '../account/account'
-import { writeCommitMessage, type ModelDeps } from '../core/ai/commit-message'
+import { askModel, writeCommitMessage, type ModelDeps } from '../core/ai/commit-message'
 import { inlineEdit } from '../core/ai/inline-edit'
 import { memberDraft } from '../core/ai/member-draft'
 import { optimizePrompt } from '../core/ai/prompt-optimize'
@@ -40,6 +41,74 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/
 /** 查实际扣费：Sub2api 记账有延迟，隔一会儿再查 */
 const CHARGE_WAITS = [800, 1500, 3000, 5000]
 const KEEP_CHARGES = 20
+
+/** 让审核模型对 Claude Code 权限请求作出明确决定；无法判断时返回 null 给人工审批。 */
+export async function reviewClaudeApproval(
+  ctx: AppContext,
+  session: SessionRecord,
+  request: ApprovalRequest,
+): Promise<'allow' | 'deny' | null> {
+  const model = ctx.engine?.engineConfig().codex.autoReviewModel
+  if (!model) return null
+  const source: AiChannelRequest['source'] = session.platform
+    ? 'platform'
+    : session.provider
+      ? 'custom'
+      : session.engine === 'claude' || session.engine === 'codex' || session.engine === 'antigravity'
+        ? session.engine
+        : 'custom'
+  const channel: AiChannelRequest = {
+    requestId: randomUUID(),
+    source,
+    groups: session.platform ? [session.platform.groupId] : [],
+    providerId: session.provider?.id ?? null,
+    model,
+  }
+  const prompt = [
+    'A coding agent requests permission to perform one operation.',
+    'Decide whether this exact operation is safe and clearly within the user’s request.',
+    'Deny destructive, exfiltrating, privilege-escalating, unrelated, or ambiguous operations.',
+    'Output exactly one JSON object with decision set to allow or deny and a short reason.',
+    'Permission request:',
+    JSON.stringify(request).slice(0, 16_000),
+  ].join('\n')
+  const deps: ModelDeps = {
+    platform: (body, groupId, signal) =>
+      platformFetch('/v1/platform/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'anthropic-version': '2023-06-01',
+          'X-PixelSky-Group': groupId,
+          'X-Client-Request-ID': `pixelsky-${randomUUID()}`,
+        },
+        body,
+        signal,
+      }),
+    provider: id => ctx.providers?.resolve(id) ?? null,
+    fetch: (url, init) => fetch(url, init),
+    engine: (engine, input, signal) =>
+      ctx.engine
+        ? ctx.engine.oneShot(engine, input, signal)
+        : Promise.reject(new OneShotError('failed', '引擎还没准备好')),
+  }
+  const controller = new AbortController()
+  const result = await askModel(
+    deps,
+    channel,
+    { system: 'Review permissions conservatively. Do not perform the requested operation.', prompt, maxTokens: 300 },
+    controller.signal,
+    AbortSignal.timeout(30_000),
+  )
+  if (!result.ok) return null
+  try {
+    const parsed = JSON.parse(result.text) as { decision?: unknown }
+    return parsed.decision === 'allow' || parsed.decision === 'deny' ? parsed.decision : null
+  } catch {
+    return null
+  }
+}
 
 function oneOf<T extends string>(value: unknown, options: readonly T[]): T {
   if (typeof value !== 'string' || !options.includes(value as T)) throw new Error('参数不正确')
@@ -229,7 +298,10 @@ export function initAi(ctx: AppContext): void {
   })
 
   ipc.handle('ai:review', (_e, input: unknown) => {
-    const req = aiReviewRequest(input)
+    const parsed = aiReviewRequest(input)
+    const configuredReviewModel = ctx.engine?.engineConfig().codex.autoReviewModel
+    const req =
+      configuredReviewModel && parsed.source === 'platform' ? { ...parsed, model: configuredReviewModel } : parsed
     return run(req, (deps, signal) => reviewChanges(deps, req, signal))
   })
 

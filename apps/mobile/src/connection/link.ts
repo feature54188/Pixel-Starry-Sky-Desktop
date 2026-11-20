@@ -81,6 +81,11 @@ const DEAD_AFTER = 60_000
 
 /** 和页面同源；配对时跟随了主站列出的中转节点就连那个节点 */
 export function relayUrl(pairing: Pairing): string {
+  if (pairing.direct && pairing.relay) {
+    const url = new URL(pairing.relay)
+    url.searchParams.set('role', 'phone')
+    return url.toString()
+  }
   const target = pairing.node
   if (target) {
     const url = new URL(target)

@@ -3883,7 +3883,10 @@ export const catalog = {
     en: 'After each turn, Codex guesses what you will say next and shows it as gray text; press Tab to fill it in. It is never sent on its own. Each turn makes one extra request and uses quota. Only for your own ChatGPT login or API key; platform lines and custom APIs are not predicted.',
   },
   'settings.engines.EngineDetail.inputPredictionModel': { zh: '预测用的模型', en: 'Model for predictions' },
-  'settings.engines.EngineDetail.inputPredictionCheap': { zh: '便宜的模型（推荐）', en: 'A cheaper model (recommended)' },
+  'settings.engines.EngineDetail.inputPredictionCheap': {
+    zh: '便宜的模型（推荐）',
+    en: 'A cheaper model (recommended)',
+  },
   'settings.engines.EngineDetail.inputPredictionSame': { zh: '和会话相同', en: 'Same as the session' },
   'settings.engines.EngineDetail.peekSessions': {
     zh: '查看本机其他会话',

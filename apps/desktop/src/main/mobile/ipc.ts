@@ -2,7 +2,7 @@
 // 默认关；打开、已登录平台账号、系统加密可用才连中转。中转默认是云端服务（登录用的同一个地址），
 // 设置里可以改成别的地址（本机测试）。配对码、确认、移除经云端的 /v1/bridge/*（M2）。
 import { hostname } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
 import { app, powerSaveBlocker } from 'electron'
 import { describeError, logger } from '@pixelsky/engine'
@@ -40,6 +40,7 @@ import { createDesktopRegistrar } from './desktop-register'
 import { parseRelay, parseSeats, pickRelay } from './cloud-devices'
 import { MobileGateway, phoneAccount, type CloudDevices } from './gateway'
 import { RelayLink, relayHost } from './relay'
+import { LocalMobileRelay } from './local-relay'
 import type { WsTarget } from '../core/ws-tiers'
 import { MobileStore } from './store'
 import { enginePlatformRoutes } from '../platform/platform'
@@ -104,6 +105,19 @@ export function initMobile(ctx: AppContext): void {
     error: string | null = null
   let link: RelayLink | null = null,
     linkUrl = ''
+  const localRelay = new LocalMobileRelay(
+    (phone, frame) => gateway.receive(phone, frame),
+    phone => gateway.phoneLeft(phone),
+    app.isPackaged ? join(process.resourcesPath, 'mobile') : resolve(app.getAppPath(), '../../apps/mobile/dist'),
+    (() => {
+      const cert = (process.env.PIXELSKY_MOBILE_TLS_CERT ?? '').trim()
+      const key = (process.env.PIXELSKY_MOBILE_TLS_KEY ?? '').trim()
+      return cert && key ? { cert, key } : undefined
+    })(),
+  )
+  const localStarted = localRelay.start().catch((error: unknown) => {
+    log.warn('手机局域网直连监听启动失败', { error: describeError(error) })
+  })
 
   const state = (): MobileState => ({
     prefs: store.prefs,
@@ -207,9 +221,11 @@ export function initMobile(ctx: AppContext): void {
         return ctx.engineCall(channel, args, owner)
       }),
     send: (phone, frame) => {
+      if (localRelay.send(phone, frame)) return
       if (!link) throw new Error('MOBILE_RELAY_OFFLINE')
       link.send(phone, frame)
     },
+    localRelay,
     codec: zlibCodec,
     cloud,
     changed,
@@ -384,6 +400,7 @@ export function initMobile(ctx: AppContext): void {
     return state()
   })
   ipc.handle('mobile:pairStart', async () => {
+    await localStarted
     await gateway.startPairing()
     changed()
     return state()
@@ -446,6 +463,7 @@ export function initMobile(ctx: AppContext): void {
   })
   ctx.lifecycle.onShutdown(() => {
     stopLink()
+    localRelay.close()
     gateway.close()
     clearTimeout(awakeRecheck)
     awake = false

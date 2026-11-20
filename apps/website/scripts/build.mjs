@@ -21,7 +21,7 @@ const out = resolve(opt('--out') || join(root, 'dist'))
 const base = opt('--base') || '/download/'
 if (!/^\/([\w.-]+\/)*$/.test(base)) throw new Error(`--base 要以 / 开头和结尾：${base}`)
 
-export const REPO = 'xiaoheoxo/Pixel-Starry-Sky-Desktop'
+export const REPO = 'feature54188/Pixel-Starry-Sky-Desktop'
 /** 页面：源文件 → 输出路径（目录下的 index.html，地址不带 .html） */
 export const PAGES = [
   { file: 'index.html', out: 'index.html' },
