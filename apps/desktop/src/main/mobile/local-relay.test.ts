@@ -24,16 +24,13 @@ function connect(url: string): Promise<WebSocket> {
 
 describe('LocalMobileRelay reconnect', () => {
   it('routes a paired phone reconnect through its new socket after a page refresh', async () => {
-    let relay: LocalMobileRelay
-    let phone = ''
-    let handshakeResponse = (_sent: boolean) => {}
-    const responseSent = new Promise<boolean>(resolve => {
-      handshakeResponse = resolve
+    const handshake = { resolve: undefined as ((phone: string) => void) | undefined }
+    const receivedHandshake = new Promise<string>(resolve => {
+      handshake.resolve = resolve
     })
-    relay = new LocalMobileRelay(
+    const relay = new LocalMobileRelay(
       (id, frame) => {
-        if (decodeType(frame) === FrameType.Handshake1)
-          handshakeResponse(relay.send(id, encodeFrame(FrameType.Handshake2, Uint8Array.of(1))))
+        if (decodeType(frame) === FrameType.Handshake1) handshake.resolve?.(id)
       },
       () => {},
       '.',
@@ -48,7 +45,6 @@ describe('LocalMobileRelay reconnect', () => {
     const first = await connect(url.toString())
 
     const key = toBase64Url(generateKeypair().publicKey)
-    phone = localPhoneId(key)
     first.send(encodeFrame(FrameType.Pair, encodeJson({ key })))
     await new Promise<void>(resolve => setTimeout(resolve, 0))
     const firstClosed = new Promise<void>(resolve => first.once('close', () => resolve()))
@@ -56,10 +52,15 @@ describe('LocalMobileRelay reconnect', () => {
     await firstClosed
 
     const second = await connect(url.toString())
+    const response = new Promise<Uint8Array>(resolve => {
+      second.once('message', data => resolve(new Uint8Array(data as Buffer)))
+    })
     second.send(encodeFrame(FrameType.Handshake1, Uint8Array.of(2)))
 
-    await expect(responseSent).resolves.toBe(true)
+    const phone = await receivedHandshake
     expect(phone).toBe(localPhoneId(key))
+    expect(relay.send(phone, encodeFrame(FrameType.Handshake2, Uint8Array.of(1)))).toBe(true)
+    expect(decodeType(await response)).toBe(FrameType.Handshake2)
   })
 })
 
