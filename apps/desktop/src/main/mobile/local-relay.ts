@@ -105,6 +105,13 @@ export class LocalMobileRelay {
       if (!token || !this.tokens.has(token)) return socket.close(4001, 'unauthorized')
       socket.send(JSON.stringify({ type: 'desktop_online' }))
       let phone: string | null = this.tokenPhones.get(token) ?? null
+      // 刷新页面后手机会直接发新的握手，不会再发 Pair 帧。令牌已经绑定过手机时，
+      // 先把手机映射到这条新连接，否则网关的握手回复还会写到已经断开的旧 socket。
+      if (phone) {
+        const previous = this.sockets.get(phone)
+        if (previous && previous !== socket) previous.close(4000, 'reconnected')
+        this.sockets.set(phone, socket)
+      }
       socket.on('message', data => {
         const frame = new Uint8Array(data as Buffer)
         if (!phone) {
