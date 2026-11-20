@@ -28,7 +28,8 @@ const pairErrors = (): Record<string, string> => ({
 
 /** 扫码后：生成手机密钥，用配对码向云端换设备令牌，存下来（等电脑上确认） */
 export async function pairWithOffer(offer: Offer, phoneName: string): Promise<Pairing> {
-  const direct = !offer.raw.code && /^wss?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|localhost|127\.)/.test(offer.raw.relay)
+  const direct =
+    !offer.raw.code && /^wss?:\/\/(?:10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.|localhost|127\.)/.test(offer.raw.relay)
   if (!offer.raw.code && !direct)
     throw new Error(
       L(
@@ -47,14 +48,14 @@ export async function pairWithOffer(offer: Offer, phoneName: string): Promise<Pa
       // 局域网配对不请求云端，Pair 帧中的公钥仍由桌面端用二维码密钥校验。
       res = new Response(JSON.stringify({ deviceId, token }), { status: 200 })
     } else {
-    // 配对码在电脑申请它的主站进程内存里，所以总在页面的来源（主站）兑换；
-    // 二维码里的中转是主站列出的节点（优质节点）就记下来，之后的实时连接走那个节点
-    node = await pickNode(offer.raw.relay, location.origin)
-    res = await fetch(location.origin + '/v1/bridge/pair', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: offer.raw.code, name: phoneName }),
-    })
+      // 配对码在电脑申请它的主站进程内存里，所以总在页面的来源（主站）兑换；
+      // 二维码里的中转是主站列出的节点（优质节点）就记下来，之后的实时连接走那个节点
+      node = await pickNode(offer.raw.relay, location.origin)
+      res = await fetch(location.origin + '/v1/bridge/pair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: offer.raw.code, name: phoneName }),
+      })
     }
   } catch {
     throw new Error(L('连不上云端，检查一下网络。', 'Can’t reach the cloud. Check your network.'))

@@ -261,7 +261,7 @@ export const SETTINGS_INDEX: SearchEntry[] = [
     get title() {
       return tr('settingsEngines.autoReviewModel')
     },
-    keywords: '自动审核 自动审批 审批模型 Claude Code Codex approval autoreview',
+    keywords: tr('settingsEngines.autoReviewKeywords'),
   },
   { section: 'engines', title: '请求重试', keywords: '重试 失败 临时错误 自动重试 retry' },
   {

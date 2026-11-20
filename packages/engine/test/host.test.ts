@@ -1472,10 +1472,10 @@ describe('先出计划：批准后回到进计划前那档（docs/ui/plan-mode-s
     const host = makeHost()
     const { record } = setup(host)
     const rec = () => host.open(record.id).record
-    const turn = async (text: string): Promise<void> => {
-      const done = turnsDone(record.id)
-      await host.send(record.id, text)
-      await waitFor(() => turnsDone(record.id) > done && host.open(record.id).state === 'idle')
+    const turn = async (text: string, id = record.id): Promise<void> => {
+      const done = turnsDone(id)
+      await host.send(id, text)
+      await waitFor(() => turnsDone(id) > done && host.open(id).state === 'idle')
     }
     await host.update(record.id, { permissionMode: 'full' })
     await host.update(record.id, { permissionMode: 'plan' })
@@ -1496,10 +1496,10 @@ describe('先出计划：批准后回到进计划前那档（docs/ui/plan-mode-s
     await host.update(record.id, { permissionMode: 'full' })
     expect(rec()).toMatchObject({ permissionMode: 'full', planReturn: null })
     // 旧记录（计划中但没有 planReturn）：照旧回每步问我
-    await host.update(record.id, { permissionMode: 'plan', planReturn: null })
-    expect(rec().planReturn).toBeNull()
-    await turn('再切回')
-    await waitFor(() => rec().permissionMode === 'ask')
+    const legacy = host.createSession({ projectId: record.projectId, permissionMode: 'plan' })
+    expect(legacy.planReturn ?? null).toBeNull()
+    await turn('再切回', legacy.id)
+    await waitFor(() => host.open(legacy.id).record.permissionMode === 'ask')
     // 三轮对话，全量并行跑时 5 秒不够
   }, 20_000)
 })

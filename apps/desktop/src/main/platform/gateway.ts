@@ -756,7 +756,9 @@ export function platformGateway(options: {
           fail(403, '请求模型与当前平台会话不一致')
           return
         }
-        const models = await (options.routeModels?.(platform.groupId) ?? Promise.resolve([])).catch(() => [] as string[])
+        const models = await (options.routeModels?.(platform.groupId) ?? Promise.resolve([])).catch(
+          () => [] as string[],
+        )
         if (models.includes(String(parsed.model))) reviewFallback = back
         else {
           log.info('自动审核模型不在这个分组里，改用对话模型', { ...trace(), model: parsed.model })

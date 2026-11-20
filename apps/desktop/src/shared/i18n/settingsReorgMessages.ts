@@ -24,6 +24,10 @@ export const settingsReorgMessages = {
     en: 'Codex automatic reviews, Claude Code permission requests, and in-app code reviews can share this model. By default, Codex and code reviews use their own models, and Claude Code prompts for manual approval.',
   },
   'settingsEngines.autoReviewModelDefault': { zh: '默认', en: 'Default' },
+  'settingsEngines.autoReviewKeywords': {
+    zh: '自动审核 自动审批 审批模型 Claude Code Codex approval autoreview',
+    en: 'automatic review approval model Claude Code Codex approval autoreview',
+  },
   'settingsEngines.codexSession': { zh: '会话', en: 'Sessions' },
   'settingsEngines.factoryNoUltracode': {
     zh: '推理强度 High，Fast 关，显示思考摘要开',

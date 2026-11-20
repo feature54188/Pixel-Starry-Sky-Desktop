@@ -41,7 +41,10 @@ export class LocalMobileRelay {
 
   async start(): Promise<void> {
     if (this.server) return
-    const handler = (request: import('node:http').IncomingMessage, response: import('node:http').ServerResponse): void => {
+    const handler = (
+      request: import('node:http').IncomingMessage,
+      response: import('node:http').ServerResponse,
+    ): void => {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
       if (pathname === '/') {
         response.writeHead(302, { Location: '/m/' }).end()
@@ -56,7 +59,9 @@ export class LocalMobileRelay {
       }
       const target = existsSync(file) && statSync(file).isFile() ? file : join(root, 'index.html')
       if (!existsSync(target)) {
-        response.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Mobile app assets are unavailable')
+        response
+          .writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' })
+          .end('Mobile app assets are unavailable')
         return
       }
       const types: Record<string, string> = {
