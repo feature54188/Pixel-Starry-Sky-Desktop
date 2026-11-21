@@ -67,7 +67,7 @@ export const demoEngineStatus: EngineLite[] = [
     auth: { kind: 'login' },
     path: 'C:\\Users\\linxia\\.local\\bin\\claude.exe',
     caps: {
-      permissionModes: ['ask', 'edits', 'plan', 'full'],
+      permissionModes: ENGINES.claude.caps.permissionModes,
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       ultracode: true,
       fast: true,

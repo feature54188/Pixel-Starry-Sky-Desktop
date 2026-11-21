@@ -36,6 +36,7 @@
     "permissionModes": [
      "ask",
      "edits",
+     "auto",
      "plan",
      "full"
     ],

@@ -1,13 +1,13 @@
 // EngineHost + ClaudeSession 的完整流程，引擎用 test/fakes/fake-claude.mjs 代替（不调用真实模型）
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { HostEvent, SessionRecord } from '@pixelsky/protocol'
 import { ClaudeAdapter, EngineHost, LONG_CONTEXT_ENV, type EngineHostOptions } from '../src'
 import { setLogSink } from '../src/log'
+import { makeTmp, removeTmp } from './helpers/tmp'
 
 const FAKE = fileURLToPath(new URL('./fakes/fake-claude.mjs', import.meta.url))
 
@@ -152,14 +152,14 @@ function setup(host: EngineHost, ultracode = false) {
 }
 
 beforeEach(() => {
-  root = mkdtempSync(join(tmpdir(), 'pixelsky-engine-'))
+  root = makeTmp('pixelsky-engine')
   events = []
   hosts = []
 })
 
 afterEach(async () => {
   await Promise.all(hosts.map(h => h.shutdown()))
-  rmSync(root, { recursive: true, force: true })
+  removeTmp(root)
 })
 
 describe('EngineHost + Claude（假引擎）', () => {
@@ -799,6 +799,73 @@ describe('EngineHost + Claude（假引擎）', () => {
     const again = makeHost()
     expect(again.sessions().map(s => s.record.title)).toEqual(['你好'])
     expect(again.open(record.id).items.map(i => i.kind)).toEqual(['user', 'assistant', 'turn_stats'])
+  })
+
+  it.each(['allow', 'deny'] as const)('Claude 自动审核采用 %s，切回每步问我后交给用户', async decision => {
+    const reviewApproval = vi.fn<NonNullable<EngineHostOptions['reviewApproval']>>().mockResolvedValue(decision)
+    const host = makeHost(60_000, {}, undefined, false, { reviewApproval })
+    const engine = (await host.engines()).find(e => e.id === 'claude')
+    expect(engine?.caps.permissionModes).toContain('auto')
+    const { id } = host.createSession({ projectId: host.addProject(root).id, engine: 'claude', permissionMode: 'auto' })
+
+    await host.send(id, '写文件')
+    await waitFor(() => turnsDone(id) === 1)
+    expect(host.record(id)?.permissionMode).toBe('auto')
+    expect(reviewApproval).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id, permissionMode: 'auto' }),
+      expect.objectContaining({ kind: 'file_change' }),
+    )
+    expect(host.open(id).items[1]).toMatchObject({
+      kind: 'file_change',
+      status: decision === 'allow' ? 'completed' : 'declined',
+    })
+    expect(sessionEvents(id).some(e => e.type === 'approval_request')).toBe(false)
+
+    await host.update(id, { permissionMode: 'ask' })
+    await host.send(id, '再写文件')
+    const request = await waitFor(() => host.open(id).pending[0])
+    expect(reviewApproval).toHaveBeenCalledTimes(1)
+    host.answer(id, request.requestId, { type: 'deny' })
+    await waitFor(() => turnsDone(id) === 2)
+  })
+
+  it('Claude 审核期间改为每步问我，迟到的放行结果交回人工确认', async () => {
+    let finishReview!: (decision: 'allow') => void
+    const reviewApproval = vi.fn(
+      () =>
+        new Promise<'allow'>(resolve => {
+          finishReview = resolve
+        }),
+    )
+    const host = makeHost(60_000, {}, undefined, false, { reviewApproval })
+    const { record } = setup(host)
+    await host.update(record.id, { permissionMode: 'auto' })
+    await host.send(record.id, '写文件')
+    await waitFor(() => reviewApproval.mock.calls.length === 1)
+    await host.update(record.id, { permissionMode: 'ask' })
+    finishReview('allow')
+    const request = await waitFor(() => host.open(record.id).pending[0])
+    host.answer(record.id, request.requestId, { type: 'deny' })
+    await waitFor(() => turnsDone(record.id) === 1)
+    expect(host.open(record.id).items[1]).toMatchObject({ status: 'declined' })
+  })
+
+  it('Claude 审核无结论或调用失败时显示人工审批卡片', async () => {
+    const reviewApproval = vi
+      .fn<NonNullable<EngineHostOptions['reviewApproval']>>()
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('模型不可用'))
+    const host = makeHost(60_000, {}, undefined, false, { reviewApproval })
+    const { record } = setup(host)
+    await host.update(record.id, { permissionMode: 'auto' })
+    for (const turn of [1, 2]) {
+      await host.send(record.id, '写文件')
+      const request = await waitFor(() => host.open(record.id).pending[0])
+      expect(reviewApproval).toHaveBeenCalledTimes(turn)
+      expect(host.open(record.id).state).toBe('waiting')
+      host.answer(record.id, request.requestId, { type: 'deny' })
+      await waitFor(() => turnsDone(record.id) === turn)
+    }
   })
 
   it('审批：等待中 → 始终允许（本会话）→ 写入成功；之后同类操作不再问', async () => {

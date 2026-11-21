@@ -3,7 +3,7 @@
 
 export type EngineId = 'claude' | 'codex' | 'pixel' | 'antigravity' | 'dot'
 
-/** 权限模式：每次询问 / 自动编辑 / 计划模式 / 完全放行（docs/engines.md §6）；自动审核只有 Codex 有（docs/ui/codex-auto-review.md） */
+/** 权限模式：每次询问 / 自动编辑 / 自动审核 / 计划模式 / 完全放行。各引擎支持的档位见 ENGINES。 */
 export type PermissionMode = 'ask' | 'edits' | 'auto' | 'plan' | 'full'
 
 /** 推理强度：低 / 中 / 高 / 超高 / 极限 */

@@ -56,7 +56,7 @@ type Msg = Record<string, unknown>
 
 /** 我们的权限模式 → Claude 的 --permission-mode */
 export const TO_CLAUDE_MODE: Record<PermissionMode, string> = {
-  // Claude 没有这一档，换引擎时带过来的按每次询问
+  // 自动审核由宿主处理，CLI 仍以 default 模式发出 can_use_tool。
   auto: 'default',
   ask: 'default',
   edits: 'acceptEdits',
@@ -336,6 +336,8 @@ export class ClaudeSession implements EngineSession {
         if (id !== ctx.record().engineSessionId) ctx.setEngineSessionId(id)
       },
       permissionMode: mode => {
+        // CLI 的 default 同时对应「每步问我」和「自动审核」，保留用户在像素星空选的那档。
+        if (mode === 'ask' && ctx.record().permissionMode === 'auto') mode = 'auto'
         // 进程报的就是它现在用的模式（批准计划后 Claude Code 自己切回原模式）：记成已用上，用户再选回原来的才会发出去
         this.applied = { ...this.applied, permissionMode: mode }
         // 启动期间用户新选的模式还没补给进程：进程报的是启动时的旧模式，不能写回去盖掉
@@ -878,18 +880,22 @@ export class ClaudeSession implements EngineSession {
       const input = obj(r.input)
       const toolUseId = str(r.tool_use_id) || null
       const suggestions = Array.isArray(r.permission_suggestions) ? r.permission_suggestions : []
-      this.approvals.set(req.requestId, { toolName, input, toolUseId, suggestions })
+      const pending = { toolName, input, toolUseId, suggestions }
+      this.approvals.set(req.requestId, pending)
       const approval = approvalFor(req.requestId, toolName, input, toolUseId, this.ctx.record().cwd)
       const review = this.ctx.reviewApproval
-      if (review) {
+      if (
+        review &&
+        this.ctx.record().permissionMode === 'auto' &&
+        approval.kind !== 'plan' &&
+        approval.kind !== 'question'
+      ) {
         void review(approval)
+          .catch(() => null)
           .then(decision => {
-            if (!this.approvals.has(req.requestId)) return
-            if (decision) this.answer(req.requestId, { type: decision })
+            if (this.approvals.get(req.requestId) !== pending) return
+            if (decision && this.ctx.record().permissionMode === 'auto') this.answer(req.requestId, { type: decision })
             else this.ctx.emit({ type: 'approval_request', request: approval })
-          })
-          .catch(() => {
-            if (this.approvals.has(req.requestId)) this.ctx.emit({ type: 'approval_request', request: approval })
           })
       } else this.ctx.emit({ type: 'approval_request', request: approval })
       return

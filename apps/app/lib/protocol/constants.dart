@@ -62,7 +62,7 @@ const engines = <String, EngineDescriptor>{
     id: 'claude',
     name: 'Claude Code',
     short: 'Cc',
-    permissionModes: ['ask', 'edits', 'plan', 'full'],
+    permissionModes: ['ask', 'edits', 'auto', 'plan', 'full'],
     efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
     imageInput: true,
     interrupt: true,

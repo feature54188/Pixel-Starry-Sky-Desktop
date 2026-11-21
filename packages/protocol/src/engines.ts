@@ -34,7 +34,7 @@ export const ENGINES: Record<EngineId, EngineDescriptor> = {
       sideChat: true,
       liveModelSwitch: true,
       livePermissionSwitch: true,
-      permissionModes: ['ask', 'edits', 'plan', 'full'],
+      permissionModes: ['ask', 'edits', 'auto', 'plan', 'full'],
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       ultracode: true,
       fast: true,

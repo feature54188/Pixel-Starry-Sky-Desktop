@@ -1012,7 +1012,7 @@ export function useComposerController(
     setDraftAutoCheck,
     suggestion: snap?.suggestion ?? null,
     permissionMode: mode,
-    permissionModes: engine?.caps.permissionModes ?? ['ask', 'edits', 'plan', 'full'],
+    permissionModes: engine?.caps.permissionModes ?? ENGINES[engineId].caps.permissionModes,
     defaultPermissionMode:
       config?.[engineId]?.defaults.permissionMode ??
       (defaults?.engine === engineId ? defaults.permissionMode : null) ??

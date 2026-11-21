@@ -174,9 +174,9 @@ export class HostHandoff {
       engineSessions: map,
       pendingRewind: entry?.pendingRewind ?? null,
       pendingFork: entry?.pendingFork ?? null,
-      // 目标引擎没有的开关、强度档位和权限模式（自动审核只有 Codex 有）清掉
+      // 清掉目标引擎没有的开关、强度档位和权限模式
       ...(!caps.permissionModes.includes(record.permissionMode) ? { permissionMode: 'ask' as const } : {}),
-      // 先出计划批准后要回的档新引擎没有（自动审核只有 Codex 有）：同样回每步问我
+      // 先出计划批准后要回的档新引擎没有：同样回每步问我
       ...(record.planReturn && !caps.permissionModes.includes(record.planReturn) ? { planReturn: 'ask' as const } : {}),
       ...(!caps.ultracode && record.ultracode ? { ultracode: false } : {}),
       ...(!caps.fast && record.fast ? { fast: false } : {}),

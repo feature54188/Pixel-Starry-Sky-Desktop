@@ -3,7 +3,7 @@ import { useI18n } from '@/i18n/I18nProvider'
 import { tr, translateMessage } from '../../i18n/core'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
-import { PERMISSION_MODES, type Effort, type EngineId, type PermissionMode } from '@pixelsky/protocol'
+import { ENGINES, type Effort, type EngineId, type PermissionMode } from '@pixelsky/protocol'
 import { Button, cn, EngineIcon, IconButton, Segmented, Select, Switch, useToast, type SelectOption } from '@/ui'
 import { formatTime } from '@/features/usage/format'
 import { ConfirmDialog } from '@/ui/ConfirmDialog'
@@ -878,14 +878,13 @@ export function AgentDialog({
     setModel(next.model)
   }
   const swapped = swap && route && swap.to === model ? swap : null
+  const caps = engines.find(e => e.id === engine)?.caps
+  const permissionModes = caps?.permissionModes ?? ENGINES[engine].caps.permissionModes
   const permissionOptions: SelectOption<PermissionMode | ''>[] = [
     { value: '', label: tr('channels.agent.default') },
-    ...PERMISSION_MODES.filter(
-      m => engines.find(e => e.id === engine)?.caps.permissionModes.includes(m) ?? m !== 'auto',
-    ).map(m => ({ value: m, label: PERMISSION_INFO[m].label, hint: PERMISSION_INFO[m].hint })),
+    ...permissionModes.map(m => ({ value: m, label: PERMISSION_INFO[m].label, hint: PERMISSION_INFO[m].hint })),
   ]
   // 推理强度那几项按执行者能力显示（和会话里的菜单同一套：模型目录里的档位优先，没有就用引擎能力表）
-  const caps = engines.find(e => e.id === engine)?.caps
   const efforts = (model && catalog?.models?.find(m => m.id === model)?.efforts) || caps?.efforts || []
   // 换了执行者或模型、原来的档位不在了：退回跟随默认；引擎还没加载出能力表时原样保留
   const effortValue: Effort | '' = effort && (!caps || efforts.includes(effort)) ? effort : ''
@@ -1084,8 +1083,8 @@ export function AgentDialog({
                     // 放在 unmark 后面：它会清掉说明
                     setEngineNote(before)
                     // 自动审核只有部分引擎有：换到没有的引擎就退回跟随默认，不留一个选择框里没有的值
-                    if (permission && !engines.find(e => e.id === v)?.caps.permissionModes.includes(permission))
-                      setPermission('')
+                    const modes = engines.find(e => e.id === v)?.caps.permissionModes ?? ENGINES[v].caps.permissionModes
+                    if (permission && !modes.includes(permission)) setPermission('')
                     // 换了引擎：来源这个引擎用不了（接口协议不对、平台没线路）就回到自有账号
                     const keep = sourceOptions(v, sourceCtx).some(o => o.value === source && !o.disabled)
                     setSource(keep ? source : 'self')
