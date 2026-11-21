@@ -47,7 +47,12 @@ createInterface({ input: process.stdin }).on('line', line => {
   const text = m.params.prompt[0].text
   const end = (stopReason = 'end_turn') => out({ id: m.id, result: { stopReason, usage: { inputTokens: 10, outputTokens: 2, cachedReadTokens: 5, cachedWriteTokens: 0 } } })
   upd({ sessionUpdate: 'usage_update', used: 100, size: 1000 })
-  if (text.includes('slow') || (text === '/compact' && process.env.FAKE_SLOW_COMPACT)) { cancelTurn = () => end('cancelled'); return }
+  if (text === 'reject guidance') return out({ id: m.id, error: { code: -32603, message: 'guidance rejected' } })
+  if (text.includes('slow') || (text === '/compact' && process.env.FAKE_SLOW_COMPACT)) {
+    cancelTurn?.('end_turn')
+    cancelTurn = (reason = 'cancelled') => { cancelTurn = null; end(reason) }
+    return
+  }
   if (text.includes('err')) { upd({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '\\n⚠ agent executor error: Error 404 no model\\n' } }); return end() }
   if (text.includes('ask')) {
     const call = { toolCallId: 'q1', name: 'ask_question', kind: 'other', title: 'Run ask_question', rawInput: { questions: [{ question: 'Red or blue?', options: ['(Recommended) Red', 'Blue'], is_multi_select: false }] } }
@@ -160,6 +165,72 @@ function setup(
 }
 
 describe('Antigravity 会话（假 agy）', () => {
+  it('运行中追加两次引导，交接 prompt 保留原轮次，停止最后一个才结束任务', async () => {
+    const t = setup()
+    try {
+      t.session.send('slow initial', 't1', 'u1')
+      await vi.waitFor(() =>
+        expect(t.events).toContainEqual(
+          expect.objectContaining({
+            type: 'flags',
+            flags: expect.objectContaining({ steerAvailable: true }),
+          }),
+        ),
+      )
+      const image = {
+        id: 'image1',
+        name: 'guide.png',
+        bytes: 3,
+        width: 1,
+        height: 1,
+        mediaType: 'image/png' as const,
+        dataBase64: 'AQID',
+      }
+      await t.session.steer('slow first', 'g1', [image])
+      await t.session.steer('slow second', 'g2')
+      expect(
+        t
+          .sent()
+          .filter(m => m.method === 'session/prompt')
+          .map(m => m.params.prompt),
+      ).toEqual([
+        [{ type: 'text', text: 'slow initial' }],
+        [
+          { type: 'text', text: 'slow first' },
+          { type: 'image', mimeType: 'image/png', data: 'AQID' },
+        ],
+        [{ type: 'text', text: 'slow second' }],
+      ])
+      expect(t.events.filter(e => e.type === 'input_ack')).toEqual([
+        { type: 'input_ack', id: 'g1', state: 'consumed', mode: 'guidance' },
+        { type: 'input_ack', id: 'g2', state: 'consumed', mode: 'guidance' },
+      ])
+      expect(t.events.some(e => e.type === 'turn_completed')).toBe(false)
+      await t.session.interrupt()
+      expect(await t.turnDone('t1')).toMatchObject({ outcome: 'interrupted' })
+      expect(t.events.filter(e => e.type === 'turn_completed')).toHaveLength(1)
+      await expect(t.session.steer('late', 'g3')).rejects.toThrow()
+    } finally {
+      await t.session.close()
+    }
+  })
+
+  it('引导被拒绝后仍能继续引导原任务', async () => {
+    const t = setup()
+    try {
+      t.session.send('slow initial', 't1', 'u1')
+      await vi.waitFor(() => expect(t.sent().some(m => m.method === 'session/prompt')).toBe(true))
+      await expect(t.session.steer('reject guidance', 'g1')).rejects.toThrow('guidance rejected')
+      expect(t.events).toContainEqual({ type: 'input_ack', id: 'g1', state: 'uncertain', mode: 'guidance' })
+      await t.session.steer('slow second', 'g2')
+      expect(t.events).toContainEqual({ type: 'input_ack', id: 'g2', state: 'consumed', mode: 'guidance' })
+      await t.session.interrupt()
+      expect(await t.turnDone('t1')).toMatchObject({ outcome: 'interrupted' })
+    } finally {
+      await t.session.close()
+    }
+  })
+
   it('提问：弹提问卡片、这一轮不结束，回答当下一次 prompt 发回去；文字版的问题不显示', async () => {
     const t = setup()
     t.session.send('ask me', 't1', 'u1')

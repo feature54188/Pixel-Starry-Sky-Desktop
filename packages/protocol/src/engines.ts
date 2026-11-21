@@ -27,7 +27,7 @@ export const ENGINES: Record<EngineId, EngineDescriptor> = {
       imageInput: true,
       interrupt: true,
       resume: true,
-      steer: false,
+      steer: true,
       rewind: true,
       rewindCode: true,
       fork: true,
@@ -145,8 +145,7 @@ export const ENGINES: Record<EngineId, EngineDescriptor> = {
       imageInput: true,
       interrupt: true,
       resume: true,
-      // agy 运行中再发一条就引导当前这一轮，但 P0 没录过、还没接：先走宿主排队（docs/antigravity-engine.md §11）
-      steer: false,
+      steer: true,
       rewind: false,
       fork: false,
       sideChat: false,

@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import { basename, delimiter, dirname, join } from 'node:path'
 import {
   EFFORTS,
+  ENGINES,
   codedError,
   type AgentRuns,
   type ContextWindows,
@@ -109,7 +110,7 @@ export interface ClaudeAdapterOptions {
   launcher?: Launcher
   /** 测试用：Claude 会话记录目录 */
   projectsDir?: string
-  /** 明确通过真实追加输入验证后由宿主开放；桌面正式配置当前不设置。 */
+  /** 默认采用能力表；当前 CLI 还须报告消息生命周期和取消回执。 */
   steeringValidated?: boolean
   /** 当前订阅账号的目录（docs/ui/engine-accounts-claude.md）；null 是原来的配置目录 */
   account?: () => string | null
@@ -535,7 +536,7 @@ export class ClaudeAdapter implements EngineAdapter {
       env,
       projectsDir:
         this.opts.projectsDir ?? (accountDir ? defaultProjectsDir(base) : (d.projectsDir ?? defaultProjectsDir(env))),
-      steeringValidated: this.opts.steeringValidated,
+      steeringValidated: this.opts.steeringValidated ?? ENGINES.claude.caps.steer,
       extensions: ctx.extensions,
       // 会话自己的 initialize 回包不写全局目录：会话在项目目录里启动，模型列表可能被项目设置（availableModels）限定过，
       // 目录有效期 6 小时，写进去会错很久（docs/memory-tier2.md §1）。全局目录只来自主目录的握手和读额度进程

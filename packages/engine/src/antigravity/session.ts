@@ -2,6 +2,7 @@
 // 启动：initialize →（有 Key 时）authenticate → session/resume（接上原来的）或 session/new → 重设模型 / 档位 / 模式
 // （agy 不随会话保存它们）。一轮：session/prompt，结果在这一轮结束时回；中途的 session/update 交给翻译
 import { randomUUID } from 'node:crypto'
+import { EMPTY_FLAGS } from '@pixelsky/protocol'
 import type {
   ApprovalDecision,
   ApprovalRequest,
@@ -113,10 +114,19 @@ export function acpMcpServers(list: NonNullable<ExtensionLaunch['acpMcp']>): Msg
 /** 一轮不设上限（agy 自己的 --print-timeout 也默认不限）；24 小时只是兜底 */
 const TURN_TIMEOUT = 24 * 60 * 60_000
 
+function promptBlocks(text: string, images: ImageAttachment[]): Msg[] {
+  return [{ type: 'text', text }, ...images.map(i => ({ type: 'image', mimeType: i.mediaType, data: i.dataBase64 }))]
+}
+
 interface Active {
   id: string
   started: number
   promptSent: boolean
+}
+
+interface RunningPrompt {
+  replies: Promise<Msg | null>[]
+  latest: Promise<Msg | null>
 }
 
 interface PendingApproval {
@@ -143,6 +153,7 @@ export class AntigravitySession implements EngineSession {
   private options: ConfigOption[] = []
   private settings: SessionSettings
   private active: Active | null = null
+  private runningPrompt: RunningPrompt | null = null
   private closed = false
   private readonly translator: AgyTranslator
   private readonly bg: AgyBackgroundTracker
@@ -467,18 +478,14 @@ export class AntigravitySession implements EngineSession {
           return
         }
       }
-      let prompt: Msg[] = [
-        { type: 'text', text },
-        ...images.map(i => ({ type: 'image', mimeType: i.mediaType, data: i.dataBase64 })),
-      ]
+      let prompt = promptBlocks(text, images)
       const usage: Record<string, number> = {}
       let r: Msg = {}
       // agy 提问时这一次 prompt 就结束了：我们把这一轮留着，弹提问卡片，回答当下一次 prompt 发回去（§12）
       for (;;) {
         if (!this.conn || !this.sessionId) throw new Error('Antigravity 进程退出了')
-        r = obj(await this.conn.request('session/prompt', { sessionId: this.sessionId, prompt }, TURN_TIMEOUT))
+        r = await this.promptWithGuidance(this.conn, this.sessionId, prompt, usage)
         if (this.active !== active) return
-        for (const [k, v] of Object.entries(obj(r.usage))) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v
         const question = !this.translator.error && r.stopReason !== 'cancelled' ? this.translator.takeQuestion() : null
         if (!question) break
         const decision = await this.ask(question)
@@ -509,10 +516,76 @@ export class AntigravitySession implements EngineSession {
     }
   }
 
+  private setRunningPrompt(prompt: RunningPrompt | null): void {
+    if (this.runningPrompt === prompt) return
+    this.runningPrompt = prompt
+    this.ctx.emit({ type: 'flags', flags: { ...EMPTY_FLAGS, steerAvailable: prompt !== null } })
+  }
+
+  private async promptWithGuidance(
+    conn: AcpConnection,
+    sessionId: string,
+    prompt: Msg[],
+    usage: Record<string, number>,
+  ): Promise<Msg> {
+    const first = conn.request('session/prompt', { sessionId, prompt }, TURN_TIMEOUT)
+    const running: RunningPrompt = { replies: [first], latest: first.catch(() => null) }
+    this.setRunningPrompt(running)
+    try {
+      let result: Msg = {}
+      // agy 接受引导后先结束前一个 prompt。最后一个 prompt 返回时，这次任务才结束。
+      for (const pending of running.replies) {
+        const reply = await pending
+        if (!reply) continue
+        result = reply
+        for (const [k, v] of Object.entries(obj(reply.usage))) if (typeof v === 'number') usage[k] = (usage[k] ?? 0) + v
+      }
+      return result
+    } finally {
+      if (this.runningPrompt === running) this.setRunningPrompt(null)
+    }
+  }
+
+  async steer(text: string, id: string, images: ImageAttachment[] = []): Promise<void> {
+    const running = this.runningPrompt
+    if (!running || !this.conn || !this.sessionId) throw new Error('当前 Antigravity 任务无法接收引导')
+    const previous = running.latest
+    let acknowledged = false
+    const ack = (state: 'consumed' | 'cancelled' | 'uncertain'): void => {
+      if (acknowledged) return
+      acknowledged = true
+      this.ctx.emit({ type: 'input_ack', id, state, mode: 'guidance' })
+    }
+    const response = this.conn.request(
+      'session/prompt',
+      { sessionId: this.sessionId, prompt: promptBlocks(text, images) },
+      TURN_TIMEOUT,
+    )
+    const settled = response.then(
+      raw => {
+        const reply = obj(raw)
+        ack(reply.stopReason === 'cancelled' ? 'cancelled' : this.runningPrompt === running ? 'consumed' : 'uncertain')
+        return reply
+      },
+      () => {
+        ack('uncertain')
+        return null
+      },
+    )
+    running.replies.push(settled)
+    // 被拒绝的引导没有接管任务，下一条引导仍以之前的有效请求为准。
+    running.latest = settled.then(reply => reply ?? previous)
+    // 前一条请求交回控制权时即可确认引导。断线或停止后只采用本条请求自己的回执。
+    await Promise.race([previous, response]).then(reply => {
+      if (this.runningPrompt === running && obj(reply).stopReason === 'end_turn') ack('consumed')
+    })
+  }
+
   private finish(outcome: TurnOutcome, error: string | null, usage?: unknown): void {
     const active = this.active
     if (!active) return
     this.active = null
+    this.setRunningPrompt(null)
     this.cancelApprovals()
     this.translator.finish(outcome)
     if (error)
@@ -556,6 +629,7 @@ export class AntigravitySession implements EngineSession {
       return
     }
     // 取消会关掉进行中的工具、作废等待的权限请求（§7：约 2 ms 回 cancelled）
+    this.setRunningPrompt(null)
     this.cancelApprovals()
     this.conn.notify('session/cancel', { sessionId: this.sessionId })
     if (!(await this.waitTurnEnd(5_000))) {

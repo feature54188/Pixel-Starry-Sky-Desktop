@@ -19,7 +19,7 @@ function makeHost(
   idleMs = 60_000,
   extraEnv: NodeJS.ProcessEnv = {},
   sessionEnv?: (record: SessionRecord) => NodeJS.ProcessEnv,
-  steeringValidated = false,
+  steeringValidated?: boolean,
   extra: Partial<EngineHostOptions> = {},
 ): EngineHost {
   const projectsDir = join(root, 'claude-projects')
@@ -381,7 +381,7 @@ describe('EngineHost + Claude（假引擎）', () => {
     expect(spawnArgs()).toHaveLength(2)
   })
   it('折叠到当前轮的引导保留流式内容与原 turnId，不新增一次普通发送', async () => {
-    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: 'fold' }, undefined, true)
+    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: 'fold' })
     const { record } = setup(host)
     await host.send(record.id, '慢慢说')
     await waitFor(
@@ -402,7 +402,7 @@ describe('EngineHost + Claude（假引擎）', () => {
     expect(host.open(record.id).queue).toHaveLength(0)
   })
   it('Claude 补充输入在后一轮采纳时跟踪 UUID 与两个 result，不重复派发', async () => {
-    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' }, undefined, true)
+    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' })
     const { record } = setup(host)
     await host.send(record.id, '慢慢说')
     await waitFor(
@@ -420,7 +420,7 @@ describe('EngineHost + Claude（假引擎）', () => {
   })
 
   it('停止会取消已交给 Claude 但未消费的补充输入，原文回宿主暂停队列', async () => {
-    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' }, undefined, true)
+    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' })
     const { record } = setup(host)
     await host.send(record.id, '慢慢说')
     await waitFor(() => host.open(record.id).flags.steerAvailable)
@@ -435,8 +435,15 @@ describe('EngineHost + Claude（假引擎）', () => {
     expect(host.open(record.id).items.filter(i => i.kind === 'user' && i.text === '尚未采纳的补充')).toHaveLength(1)
   })
 
-  it('仅 CLI 声明协议能力不能自行开放未经真实验证的引导', async () => {
-    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' })
+  it('旧 CLI 缺少消息生命周期和取消回执时保持引导不可用', async () => {
+    const host = makeHost()
+    const { record } = setup(host)
+    await host.send(record.id, '你好')
+    await waitFor(() => turnsDone(record.id) === 1)
+    expect(host.open(record.id).flags.steerAvailable).toBe(false)
+  })
+  it('宿主显式关闭引导时覆盖默认能力', async () => {
+    const host = makeHost(60_000, { FAKE_CLAUDE_GUIDE: '1' }, undefined, false)
     const { record } = setup(host)
     await host.send(record.id, '你好')
     await waitFor(() => turnsDone(record.id) === 1)
