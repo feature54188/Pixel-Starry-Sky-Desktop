@@ -2,19 +2,22 @@
 // 底部是和会话页一样的浮起输入框卡片（写第一句话、可以带图片），「+」右边的胶囊是模式，右边圆键开始。没有快捷建议。
 // 引擎默认用电脑上设的那个（docs/mobile-remote.md §17 第 7 项）；
 // 权限模式、模型、强度、快速模式默认用电脑上的设置，也可以在「模式」里先选好（C2，§21.5；完全放行只能在电脑上开；
-// 快速模式 §25，打开确认一次）。线路总是用电脑上的。
+// 快速模式 §25，打开确认一次）。额度来源也可以在电脑配好的线路和接口里选。
 import { useRef, useState } from 'react'
 import { ArrowUp, Check, ChevronDown, Folder } from 'lucide-react'
 import {
   ENGINES,
   ENGINE_ORDER,
+  type PhoneModelChoice,
   type Effort,
   type EngineId,
   type PermissionMode,
   type SessionRecord,
 } from '@pixelsky/protocol'
+import { ModelPicker } from '@/ui/ModelPicker'
 import type { Pairing } from '@/connection'
-import { useCatalog, useDefaultEngine, useDesktop } from '@/data/hooks'
+import { useCatalog, useDefaultEngine, useDesktop, useSources, usePhoneOption, usePanelDefaults } from '@/data/hooks'
+import { loadModelChoices, confirmSource, phoneSource, sourceModels, sourceOptions } from '@/data/sources'
 import {
   effortOptions,
   fastConfirm,
@@ -22,7 +25,7 @@ import {
   modeChip,
   modelOptions,
   permissionOptions,
-  widens,
+  confirmPermission,
 } from '@/data/mode'
 import { imageDataUrl, usePendingImages } from '@/data/images'
 import { attemptFor, sendKey, type SendAttempt } from '@/data/retry'
@@ -38,12 +41,27 @@ const pill =
 
 /** 新会话的模式；null 都是「用电脑上的设置」 */
 interface Settings {
+  source: string | null
+  thinkingSummaries: boolean | null
   permissionMode: PermissionMode | null
   model: string | null
   effort: Effort | null
+  plan: boolean
+  checks: boolean
+  ultrafast: boolean | null
   fast: boolean | null
 }
-const DESKTOP: Settings = { permissionMode: null, model: null, effort: null, fast: null }
+const DESKTOP: Settings = {
+  source: null,
+  thinkingSummaries: null,
+  permissionMode: null,
+  model: null,
+  effort: null,
+  checks: false,
+  plan: false,
+  ultrafast: null,
+  fast: null,
+}
 
 export function NewTask({
   pairing,
@@ -94,14 +112,24 @@ export function NewTask({
     setError(null)
     const value = text.trim()
     const ids = images.images.map(i => i.id)
-    const picks = Object.fromEntries(Object.entries(mode).filter(([, v]) => v !== null))
+    const { source, checks, plan, ...settings } = mode
+    const picks = {
+      ...Object.fromEntries(Object.entries(settings).filter(([, v]) => v !== null)),
+      ...(source ? { source: phoneSource(source) } : {}),
+      ...(plan ? { permissionMode: 'plan', ...(mode.permissionMode ? { planReturn: mode.permissionMode } : {}) } : {}),
+    }
     const target = JSON.stringify([chosen, engine, picks])
     try {
       if (created.current?.key !== target) {
-        const record = await link.call<SessionRecord>('engine:createSession', { projectId: chosen, engine, ...picks })
+        const record = await link.call<SessionRecord>('engine:createSession', {
+          projectId: chosen,
+          ...(picked || Object.keys(picks).length ? { engine } : {}),
+          ...picks,
+        })
         created.current = { key: target, sessionId: record.id }
       }
       const sessionId = created.current.sessionId
+      if (checks) await link.call('projectTools:setSessionChecks', sessionId, true)
       const current = attemptFor(attempt.current, sendKey(sessionId, value, ids))
       attempt.current = current
       await link.call('engine:send', sessionId, {
@@ -264,6 +292,25 @@ export function NewTask({
           deviceId={pairing.deviceId}
           engine={engine}
           mode={mode}
+          onChoice={choice => {
+            const next = choice.engine === engine ? mode : DESKTOP
+            setPicked(choice.engine)
+            setSettings({
+              engine: choice.engine,
+              value: {
+                ...next,
+                model: choice.model,
+                source:
+                  choice.source.kind === 'platform'
+                    ? 'platform:' + choice.source.groupId
+                    : choice.source.kind === 'provider'
+                      ? 'provider:' + choice.source.id
+                      : 'self',
+                effort: null,
+                ultrafast: null,
+              },
+            })
+          }}
           onChange={setMode}
           onClose={() => setModeOpen(false)}
         />
@@ -276,11 +323,27 @@ export function NewTask({
 function modeText(mode: Settings): string {
   const chip = modeChip({ permissionMode: mode.permissionMode ?? 'ask', model: mode.model, effort: mode.effort })
   const speed = mode.fast === null ? null : mode.fast ? L('快速', 'Fast') : L('普通速度', 'Normal speed')
-  const parts = [mode.permissionMode && chip.permission, chip.model, chip.effort, speed].filter(Boolean)
+  const sourceLabel =
+    mode.source &&
+    (mode.source === 'self'
+      ? L('自己的账号', 'My account')
+      : mode.source.startsWith('provider:')
+        ? L('自定义接口', 'Custom API')
+        : L('平台线路', 'Platform route'))
+  const thinking =
+    mode.thinkingSummaries === null
+      ? null
+      : mode.thinkingSummaries
+        ? L('显示思考摘要', 'Show thinking')
+        : L('隐藏思考摘要', 'Hide thinking')
+  const parts = [sourceLabel, mode.permissionMode && chip.permission, chip.model, chip.effort, speed, thinking].filter(
+    Boolean,
+  )
   return parts.length ? parts.join(' · ') : L('用电脑上的设置', "Computer's settings")
 }
 
 function NewMode({
+  onChoice,
   deviceId,
   engine,
   mode,
@@ -290,57 +353,128 @@ function NewMode({
   deviceId: string
   engine: EngineId
   mode: Settings
+  onChoice(choice: PhoneModelChoice): void
   onChange(patch: Partial<Settings>): void
   onClose(): void
 }) {
-  const catalog = useCatalog(deviceId, engine)
-  const model = catalog.models?.find(m => m.id === mode.model)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const sources = useSources(deviceId, engine, true, true)
+  const routeModels = sourceModels(sources.data, mode.source ?? '')
+  const catalog = useCatalog(deviceId, engine, routeModels === null, mode.source === null)
+  const model = routeModels === null ? catalog.models?.find(m => m.id === mode.model) : undefined
+  const unsupported = routeModels === null && catalog.unsupported
+  const parity = sources.data?.composer === true
+  const speed = usePhoneOption<{ allowed: boolean; multiplier: number | null }>(
+    deviceId,
+    'speedOption',
+    [engine, mode.source ? phoneSource(mode.source) : null, mode.model],
+    parity,
+  )
+  const defaults = usePanelDefaults(deviceId, engine, parity, {
+    ...(mode.effort !== null ? { effort: mode.effort } : {}),
+    ...(mode.fast !== null ? { fast: mode.fast } : {}),
+    ...(mode.thinkingSummaries !== null ? { thinkingSummaries: mode.thinkingSummaries } : {}),
+  })
+  if (pickerOpen)
+    return (
+      <ModelPicker
+        loadChoices={loadModelChoices}
+        deviceId={deviceId}
+        onClose={() => setPickerOpen(false)}
+        onPick={c => {
+          onChoice(c)
+          setPickerOpen(false)
+        }}
+      />
+    )
   return (
     <ModeSheet
+      defaultsActions={
+        defaults.defaults
+          ? {
+              changed: !!defaults.changed,
+              save: defaults.save,
+              reset: () => onChange({ effort: null, fast: null, ultrafast: null, thinkingSummaries: null }),
+            }
+          : undefined
+      }
+      modelPicker={parity ? () => setPickerOpen(true) : undefined}
+      toggles={
+        parity
+          ? [
+              ...(ENGINES[engine].caps.permissionModes.includes('plan')
+                ? [
+                    {
+                      key: 'plan',
+                      label: L('先出计划', 'Plan first'),
+                      value: mode.plan,
+                      onChange: (plan: boolean) => onChange({ plan }),
+                    },
+                  ]
+                : []),
+              {
+                key: 'checks',
+                label: L('做完自动检查', 'Run checks after each turn'),
+                value: mode.checks,
+                onChange: (checks: boolean) => onChange({ checks }),
+              },
+            ]
+          : []
+      }
       title={L('新会话的模式', 'Mode for the new conversation')}
-      readOnly={catalog.unsupported}
+      readOnly={unsupported}
       error={
-        catalog.unsupported
+        unsupported
           ? L(
               '电脑上的像素星空版本较旧，新会话用电脑上的设置。',
               "The PixelSky app on your computer is out of date. The new conversation will use the computer's settings.",
             )
-          : null
+          : defaults.error || sources.error
       }
       note={L('没选的项用电脑上的设置。', "Anything not selected uses the computer's settings.")}
       onClose={onClose}
       groups={[
+        ...(sources.data?.canPickSource
+          ? [
+              {
+                key: 'source',
+                title: L('模型来源', 'Model source'),
+                options: [{ value: '', label: L('跟随电脑', 'Follow computer') }, ...sourceOptions(sources.data)],
+                value: mode.source ?? '',
+                onPick: (v: string) => {
+                  if (sources.data && confirmSource(sources.data, mode.source ?? '', v))
+                    onChange({ source: v || null, model: null, effort: null, ultrafast: null })
+                },
+              },
+            ]
+          : []),
         {
           key: 'permission',
           title: L('权限', 'Permissions'),
-          options: permissionOptions(engine, null),
+          options: permissionOptions(engine, null, sources.data?.desktopPermissions, parity),
           value: mode.permissionMode ?? '',
           onPick: v => {
             const to = (v || null) as PermissionMode | null
-            if (
-              to &&
-              widens(null, to) &&
-              !confirm(
-                L(
-                  '放宽权限：AI 改文件时不再先问你。确定吗？',
-                  "Loosen permissions? The AI won't ask before editing files.",
-                ),
-              )
-            )
-              return
+            if (to && !confirmPermission(null, to)) return
             onChange({ permissionMode: to })
           },
         },
         {
           key: 'model',
           title:
-            catalog.models === null && !catalog.unsupported
+            routeModels === null && catalog.models === null && !catalog.unsupported
               ? L('模型（正在取）', 'Model (loading)')
               : L('模型', 'Model'),
-          options: modelOptions(catalog.models, mode.model),
+          options:
+            routeModels === null
+              ? modelOptions(catalog.models, mode.model)
+              : [
+                  { value: '', label: L('来源默认模型', 'Source default') },
+                  ...routeModels.map(id => ({ value: id, label: id })),
+                ],
           value: mode.model ?? '',
           // 换了模型：强度可能不在新模型的范围里，回到默认
-          onPick: v => onChange({ model: v || null, effort: null }),
+          onPick: v => onChange({ model: v || null, effort: null, ultrafast: null }),
         },
         {
           key: 'effort',
@@ -358,12 +492,32 @@ function NewMode({
                   { value: '', label: L('电脑上的设置', "Computer's settings") },
                   { value: 'off', label: L('普通', 'Normal') },
                   { value: 'on', label: L('快速模式', 'Fast mode'), hint: fastDefaultHint() },
+                  ...(speed?.allowed
+                    ? [{ value: 'ultrafast', label: 'Ultrafast' + (speed.multiplier ? ' ×' + speed.multiplier : '') }]
+                    : []),
                 ],
-                value: mode.fast === null ? '' : mode.fast ? 'on' : 'off',
+                value:
+                  mode.fast === null ? '' : mode.ultrafast && speed?.allowed ? 'ultrafast' : mode.fast ? 'on' : 'off',
                 onPick: (v: string) => {
-                  if (v === 'on' && !confirm(fastConfirm())) return
-                  onChange({ fast: v === '' ? null : v === 'on' })
+                  if ((v === 'on' || v === 'ultrafast') && !confirm(fastConfirm())) return
+                  onChange({ fast: v === '' ? null : v !== 'off', ultrafast: v === '' ? null : v === 'ultrafast' })
                 },
+              },
+            ]
+          : []),
+        ...(ENGINES[engine]?.caps.thinkingSummaries
+          ? [
+              {
+                key: 'thinking',
+                title: L('思考摘要', 'Thinking summaries'),
+                segmented: true,
+                options: [
+                  { value: '', label: L('跟随电脑', 'Follow computer') },
+                  { value: 'on', label: L('显示', 'Show') },
+                  { value: 'off', label: L('隐藏', 'Hide') },
+                ],
+                value: mode.thinkingSummaries === null ? '' : mode.thinkingSummaries ? 'on' : 'off',
+                onPick: (v: string) => onChange({ thinkingSummaries: v === '' ? null : v === 'on' }),
               },
             ]
           : []),

@@ -14,10 +14,15 @@ import { randomUUID } from 'node:crypto'
 import {
   EFFORTS,
   ENGINES,
+  platformUltrafastModel,
+  ultrafastEligible,
+  platformUltrafastMultiplier,
+  type PermissionMode,
   IPC_CONTRACT,
   SESSION_TITLE_LIMIT,
   type Effort,
   type EngineCaps,
+  type EngineConfig,
   type EngineCatalog,
   type EngineId,
   type EngineQuotaProvider,
@@ -55,6 +60,8 @@ import {
   type PairStatus,
 } from '@pixelsky/link'
 import type { EngineCall } from '../app/context'
+import type { PhoneModelChoice, PhoneSource, PhoneSources } from '@pixelsky/protocol'
+import type { MobileSessionChoice } from '../../shared/types/mobile'
 import type { DirectoryChoices } from '../core/directories'
 import { slimForPhone } from '../core/engine/tail'
 import type { AccountInfo } from '../../shared/types/account'
@@ -150,6 +157,7 @@ export interface GatewayDeps {
 
 export interface LocalQueries {
   defaultEngine(): EngineId
+  sessionChoice?(engine: EngineId): MobileSessionChoice
   search(text: string, projectId: string | null, signal: AbortSignal): Promise<SearchResponse>
   /** 加项目时列这台电脑上的目录（不传时从主目录开始） */
   directories?(path: string | null): Promise<DirectoryChoices>
@@ -160,7 +168,7 @@ export interface LocalQueries {
   /** 订阅账号的额度（Claude / ChatGPT / Google，docs/mobile-app.md §17）：一分钟内取过就用缓存 */
   quota?(provider: EngineQuotaProvider): Promise<AccountQuota | null>
   /** 这个引擎在电脑上配好的额度来源（平台线路、自定义接口）；没有时手机不能换来源 */
-  sources?(engine: EngineId): Promise<DesktopSources>
+  sources?(engine: EngineId, includePlatform?: boolean): Promise<DesktopSources>
   /** 电脑的反馈（设置 › 反馈）；反馈模块还没起来时为 null */
   feedback?(): PhoneFeedback | null
   /** 对话的 PR（session-status）；还没起来时为 null */
@@ -376,6 +384,8 @@ interface PhoneTool {
  * 写操作只有暂存、取消暂存、提交、推送（不强推）、新建 / 改任务；放弃改动、删分支、改写历史都不放行（§18.7）。
  */
 export const PHONE_TOOLS: Readonly<Record<string, PhoneTool>> = {
+  'projectTools:sessionChecks': { access: 'view', args: a => [{ sessionId: asString(a[0]) }] },
+  'projectTools:setSessionChecks': { access: 'act', args: a => [{ sessionId: asString(a[0]) }, asBoolean(a[1])] },
   // 第三个参数 false：目录不存在照常报错；第四个 true：文件带大小（旧电脑不认，手机就不显示）
   'files:list': { access: 'view', args: a => [workspaceArg(a[0]), relativePath(a[1]), false, true] },
   'files:read': { access: 'view', args: a => [workspaceArg(a[0]), relativePath(a[1])] },
@@ -674,19 +684,9 @@ function cutText(text: string, limit: number): string {
 
 /** 手机能选的权限模式：不含 full（完全放行只能在电脑上开，docs/mobile-remote.md §21.5） */
 const PHONE_MODES = ['ask', 'edits', 'plan'] as const
-type PhoneMode = (typeof PHONE_MODES)[number]
+type PhoneMode = PermissionMode
 
-/** 手机能改的会话设置（新建和修改共用）；平台、接口、引擎、ultracode 不让手机动 */
-/** 手机选的额度来源（docs/mobile-app.md §14.4）：只能是电脑上已经配好的，网关对着 LocalQueries.sources 核对 */
-export type PhoneSource = { kind: 'self' } | { kind: 'platform'; groupId: string } | { kind: 'provider'; id: string }
-
-/** 给手机的来源列表：自定义 API 只给名字和模型，不给地址、Key；平台线路带倍率（换到更贵的手机上要确认） */
-export interface PhoneSources {
-  /** 平台线路，按倍率从低到高；电脑没登录、余额不足、读不到时为 null，原因在 platformError */
-  platform: { id: string; name: string; rate: number; models: string[] }[] | null
-  platformError: string | null
-  providers: { id: string; name: string; models: string[] }[]
-}
+export type { PhoneSource, PhoneSources } from '@pixelsky/protocol'
 
 /** 电脑上解析来源时多知道的：平台账号（换到平台时写进会话记录），不发给手机 */
 export interface DesktopSources extends PhoneSources {
@@ -709,6 +709,7 @@ export interface PhoneSettings {
   thinkingSummaries?: boolean
   /** 快速模式（docs/mobile-remote.md §25）：引擎有 fast 能力才收 */
   fast?: boolean
+  ultrafast?: boolean
 }
 
 /**
@@ -723,16 +724,17 @@ function phoneSource(v: unknown): PhoneSource {
   throw new Error('MOBILE_BAD_ARGUMENT')
 }
 
-export function phoneSettings(o: Record<string, unknown>): PhoneSettings {
+export function phoneSettings(o: Record<string, unknown>, desktopPermissions = false): PhoneSettings {
   const out: PhoneSettings = {}
+  const modes: readonly string[] = desktopPermissions ? ['plan', 'ask', 'edits', 'auto', 'full'] : PHONE_MODES
   if (o.source !== undefined) out.source = phoneSource(o.source)
   if (o.permissionMode !== undefined) {
-    if (!PHONE_MODES.includes(o.permissionMode as PhoneMode)) throw new Error('MOBILE_BAD_ARGUMENT')
+    if (!modes.includes(o.permissionMode as string)) throw new Error('MOBILE_BAD_ARGUMENT')
     out.permissionMode = o.permissionMode as PhoneMode
   }
   if (o.planReturn !== undefined) {
-    if (o.planReturn !== 'ask' && o.planReturn !== 'edits') throw new Error('MOBILE_BAD_ARGUMENT')
-    out.planReturn = o.planReturn
+    if (o.planReturn === 'plan' || !modes.includes(o.planReturn as string)) throw new Error('MOBILE_BAD_ARGUMENT')
+    out.planReturn = o.planReturn as Exclude<PhoneMode, 'plan'>
   }
   if (o.model !== undefined) out.model = o.model === null ? null : asString(o.model)
   if (o.effort !== undefined) {
@@ -746,6 +748,10 @@ export function phoneSettings(o: Record<string, unknown>): PhoneSettings {
   if (o.fast !== undefined) {
     if (typeof o.fast !== 'boolean') throw new Error('MOBILE_BAD_ARGUMENT')
     out.fast = o.fast
+  }
+  if (o.ultrafast !== undefined) {
+    out.ultrafast = asBoolean(o.ultrafast)
+    if (out.ultrafast && out.fast !== true) throw new Error('MOBILE_BAD_ARGUMENT')
   }
   return out
 }
@@ -808,7 +814,7 @@ export function resolvePhoneSource(
         ? keep
         : target.kind === 'self'
           ? null
-          : models![0]
+          : (models?.[0] ?? null)
   }
   if (!changing) {
     delete patch.platform
@@ -836,11 +842,6 @@ const asBoolean = (v: unknown): boolean => {
 const asAnyEngine = (v: unknown): EngineId => {
   if (typeof v !== 'string' || !Object.hasOwn(ENGINES, v)) throw new Error('MOBILE_BAD_ARGUMENT')
   return v as EngineId
-}
-
-const asEngine = (v: unknown): EngineId => {
-  if (v !== 'claude' && v !== 'codex' && v !== 'pixel') throw new Error('MOBILE_BAD_ARGUMENT')
-  return v
 }
 
 /** 会话标题：去首尾空白、非空、不含控制字符、不超过桌面重命名的上限 */
@@ -890,22 +891,27 @@ function phoneSideHistory(v: unknown): { question: string; answer: string }[] {
 }
 
 /** 手机传来的参数：只留手机该给的字段，其余由电脑上的设置决定（线路、平台、引擎用电脑上的；权限模式、模型、强度只认 phoneSettings 那几项） */
-export function sanitize(method: string, args: unknown[]): unknown[] {
+export function sanitize(method: string, args: unknown[], desktopPermissions = false): unknown[] {
   switch (method) {
     case 'engine:createSession': {
       const o = (args[0] ?? {}) as Record<string, unknown>
-      const engine = o.engine === 'claude' || o.engine === 'codex' || o.engine === 'pixel' ? { engine: o.engine } : {}
-      return [{ projectId: asString(o.projectId), ...engine, ...phoneSettings(o) }]
+      const engine = o.engine === undefined ? {} : { engine: asAnyEngine(o.engine) }
+      return [{ projectId: asString(o.projectId), ...engine, ...phoneSettings(o, desktopPermissions) }]
     }
     case 'engine:updateSession': {
-      const patch = phoneSettings((args[1] ?? {}) as Record<string, unknown>)
+      const raw = (args[1] ?? {}) as Record<string, unknown>
+      const patch = phoneSettings(raw, desktopPermissions)
+      if (args[2] === 'modelChoice' && raw.engine !== undefined) {
+        if (!patch.source || !patch.model) throw new Error('MOBILE_BAD_ARGUMENT')
+        Object.assign(patch, { engine: asAnyEngine(raw.engine) })
+      }
       // 一项都没留下（只给了被丢弃的字段）：没东西可改，报错让手机知道
       if (!Object.keys(patch).length) throw new Error('MOBILE_BAD_ARGUMENT')
       // 第三个参数告诉电脑这是手机改的，会话里留一条记录（ops.ts 的 engine:updateSession）
       return [asString(args[0]), patch, 'mobile']
     }
     case 'engine:catalog':
-      return [asEngine(args[0])]
+      return [asAnyEngine(args[0])]
     case 'engine:renameSession':
       return [asString(args[0]), asTitle(args[1])]
     case 'engine:setSessionPinned':
@@ -940,7 +946,12 @@ export function sanitize(method: string, args: unknown[]): unknown[] {
       const decision = (args[2] ?? {}) as { type?: unknown }
       if (decision.type === 'allow_all') throw new Error('MOBILE_FORBIDDEN')
       // 第四个参数告诉电脑这是手机答的：批准计划后不回完全放行（ops.ts 的 engine:answer）
-      return [args[0], args[1], args[2], 'mobile']
+      return [
+        args[0],
+        args[1],
+        args[2],
+        desktopPermissions && args[3] === 'keepPlanReturn' ? 'mobile-granted' : 'mobile',
+      ]
     }
     case 'engine:compact':
       return [asString(args[0])]
@@ -1193,6 +1204,7 @@ export class MobileGateway {
         version: LINK_VERSION,
         name: this.d.desktopName(),
         access: device.access,
+        ...(device.desktopPermissions === true && device.access === 'act' ? { desktopPermissions: true } : {}),
         tools: true,
         queueMoveBefore: true,
       }
@@ -1224,9 +1236,76 @@ export class MobileGateway {
       // 这个引擎在电脑上配好的额度来源（docs/mobile-app.md §14.4）；平台账号不给手机
       if (!this.d.local?.sources) throw new Error('MOBILE_UNSUPPORTED')
       const { account: _account, ...forPhone } = await this.d.local.sources(asAnyEngine(args[0]))
+      if (args[1] === 'newSession' || args[1] === 'composer')
+        return {
+          ...forPhone,
+          canPickSource: true,
+          composer: true,
+          desktopPermissions: device.access === 'act' && device.desktopPermissions === true,
+        }
       return forPhone
     }
     if (method === 'search') return this.search(peer, args)
+    if (method === 'effortDefaults') {
+      const engine = asAnyEngine(args[0])
+      const owner = 'mobile:' + peer.phone
+      if (args[1] !== undefined) {
+        if (device.access !== 'act') throw new Error('MOBILE_FORBIDDEN')
+        const raw = args[1] as Record<string, unknown>
+        if (!raw || typeof raw !== 'object') throw new Error('MOBILE_BAD_ARGUMENT')
+        const defaults = phoneSettings({ effort: raw.effort, fast: raw.fast, thinkingSummaries: raw.thinkingSummaries })
+        checkSettings(ENGINES[engine].caps, defaults)
+        if (!Object.keys(defaults).length) throw new Error('MOBILE_BAD_ARGUMENT')
+        await this.d.call('engine:setConfig', [engine, { defaults }], owner)
+      }
+      const config = (await this.d.call('engine:config', [], owner)) as EngineConfig
+      const { effort, fast, thinkingSummaries } = config[engine].defaults
+      return { effort, fast, thinkingSummaries }
+    }
+    if (method === 'modelChoices') {
+      const engine = asAnyEngine(args[0]),
+        kind = args[1]
+      if (kind === 'self') {
+        const catalog = (await this.d.call('engine:catalog', [engine], 'mobile:' + peer.phone)) as EngineCatalog
+        return (catalog?.models ?? []).map(
+          m => ({ engine, model: m.id, source: { kind }, name: ENGINES[engine].name }) satisfies PhoneModelChoice,
+        )
+      }
+      if (kind !== 'platform' && kind !== 'provider') throw new Error('MOBILE_BAD_ARGUMENT')
+      if (!this.d.local?.sources) throw new Error('MOBILE_UNSUPPORTED')
+      const sources = await this.d.local.sources(engine, kind === 'platform')
+      if (kind === 'platform')
+        return (sources.platform ?? []).flatMap(line =>
+          line.models.map(
+            model =>
+              ({
+                engine,
+                model,
+                source: { kind, groupId: line.id },
+                name: line.name,
+                rate: line.rate,
+                billing: line.billing,
+              }) satisfies PhoneModelChoice,
+          ),
+        )
+      return sources.providers.flatMap(p =>
+        p.models.map(model => ({ engine, model, source: { kind, id: p.id }, name: p.name }) satisfies PhoneModelChoice),
+      )
+    }
+    if (method === 'speedOption') {
+      const engine = asAnyEngine(args[0])
+      const selection = args[1] == null ? await this.newSessionSelection(engine) : null
+      const source =
+        args[1] == null
+          ? selection?.patch.platform
+            ? 'platform'
+            : selection?.patch.provider
+              ? 'provider'
+              : 'self'
+          : phoneSource(args[1]).kind
+      const model = args[2] == null ? (selection?.patch.model ?? null) : asString(args[2])
+      return this.speedOption(engine, source, model, 'mobile:' + peer.phone)
+    }
     if (method === 'image') return this.image(peer, args)
     if (method === 'fileImage') return this.fileImage(peer, args)
     if (method === 'queueImage') return this.queueImage(peer, args)
@@ -1247,9 +1326,68 @@ export class MobileGateway {
     const spec = Object.hasOwn(contract, method) ? contract[method] : undefined
     if (!spec?.mobile) throw new Error('MOBILE_UNSUPPORTED')
     if (spec.mobile === 'act' && device.access !== 'act') throw new Error('MOBILE_FORBIDDEN')
-    const clean = sanitize(method, args)
+    const clean = sanitize(method, args, device.access === 'act' && device.desktopPermissions === true)
     const owner = 'mobile:' + peer.phone
-    if (method === 'engine:updateSession' || method === 'engine:createSession') await this.vet(method, clean, owner)
+    if (method === 'engine:catalog' && args[1] === 'newSession') {
+      const engine = clean[0] as EngineId
+      const selection = await this.newSessionSelection(engine)
+      if (selection?.models) {
+        return {
+          models: selection.models.map(id => ({
+            id,
+            label: id,
+            efforts: ENGINES[engine].caps.efforts,
+            defaultEffort: null,
+            inputModalities: [],
+            isDefault: id === selection.patch.model,
+          })),
+          currentModel: selection.patch.model,
+          outputStyles: [],
+          currentOutputStyle: null,
+        } satisfies EngineCatalog
+      }
+    }
+    if (method === 'engine:updateSession' || method === 'engine:createSession') {
+      const previous = await this.vet(method, clean, owner)
+      const patch = clean[method === 'engine:createSession' ? 0 : 1] as PhoneSettings &
+        SourcePatch & { engine?: EngineId }
+      if (patch.ultrafast) {
+        const effective = { ...previous, ...patch }
+        const engine = patch.engine ?? previous?.nextEngine ?? previous?.engine
+        const kind = effective.platform ? 'platform' : effective.provider ? 'provider' : 'self'
+        if (!engine) throw new Error('MOBILE_BAD_ARGUMENT')
+        const speed = await this.speedOption(engine, kind, effective.model ?? null, owner)
+        if (!speed.allowed) {
+          if (
+            engine !== 'pixel' ||
+            !previous ||
+            patch.source ||
+            patch.model !== undefined ||
+            patch.engine !== undefined
+          )
+            throw new Error('MOBILE_BAD_ARGUMENT')
+          const tail = (await this.d.call('engine:openSessionTail', [previous.id], owner)) as {
+            snapshot: import('@pixelsky/protocol').SessionSnapshot
+          }
+          const live = tail.snapshot.flags?.pixelSpeed
+          const exec = tail.snapshot.execution
+          if (
+            !live?.ultrafast ||
+            live.model !== effective.model ||
+            (exec &&
+              (exec.platform?.groupId !== previous.platform?.groupId || exec.provider?.id !== previous.provider?.id))
+          )
+            throw new Error('MOBILE_BAD_ARGUMENT')
+        }
+      }
+      const current = this.d.store.device(peer.phone)
+      if (current?.access !== 'act') throw new Error('MOBILE_FORBIDDEN')
+      if (
+        !current.desktopPermissions &&
+        [patch.permissionMode, patch.planReturn].some(m => m === 'full' || m === 'auto')
+      )
+        throw new Error('MOBILE_FORBIDDEN')
+    }
     if (method === 'engine:openSessionTail') {
       // 先登记再取快照：取快照期间到的事件也推过去，手机按 seq 丢掉重复的
       const id = asString(args[0])
@@ -1265,14 +1403,16 @@ export class MobileGateway {
    * 手机要改 / 新建时带的设置，对着这个会话（新会话是将要用的）引擎的能力表和模型目录再核一遍：
    * 不支持的权限模式、强度、思考摘要，不在目录里的模型，整条拒绝。sanitize 已经拦掉了 full
    */
-  private async vet(method: string, clean: unknown[], owner: string): Promise<void> {
+  private async vet(method: string, clean: unknown[], owner: string): Promise<SessionSummary['record'] | undefined> {
+    let previous: SessionSummary['record'] | undefined
     let engine: EngineId, settings: PhoneSettings
     if (method === 'engine:updateSession') {
       // 引擎以电脑上这个会话记录里的为准，手机不能改引擎；运行中选了下一个引擎还没生效时，设置算它的（engine/host/sessions.ts）
       const sessions = (await this.d.call('engine:sessions', [], owner)) as SessionSummary[]
       const record = sessions.find(s => s.record.id === clean[0])?.record
       if (!record) throw new Error('MOBILE_NOT_FOUND')
-      engine = record.nextEngine ?? record.engine
+      previous = record
+      engine = (clean[1] as { engine?: EngineId }).engine ?? record.nextEngine ?? record.engine
       settings = clean[1] as PhoneSettings
       // 换来源，或在平台 / 自定义接口的会话里换模型：模型要对着那个来源核（不在引擎目录里，docs/mobile-app.md §14.4）
       const viaSource = !!record.platform || !!record.provider
@@ -1293,21 +1433,91 @@ export class MobileGateway {
         Object.assign(settings, patch)
         if (label) clean[3] = label
         checkSettings(ENGINES[engine].caps, settings)
-        return
+        return previous
       }
     } else {
-      const create = clean[0] as { engine?: EngineId }
-      settings = phoneSettings(create)
-      // 新建时选来源这次不做（用电脑上的默认来源）
-      if (settings.source !== undefined) throw new Error('MOBILE_BAD_ARGUMENT')
-      if (!Object.keys(settings).length) return
+      const create = clean[0] as PhoneSettings & { engine?: EngineId }
+      settings = create
       // 手机没指定引擎时用电脑上的默认引擎，并写明在参数里，核对的和实际用的是同一个
       engine = create.engine ?? this.d.local?.defaultEngine() ?? 'claude'
       create.engine = engine
+      if (settings.source) {
+        if (!this.d.local?.sources) throw new Error('MOBILE_UNSUPPORTED')
+        checkSettings(ENGINES[engine].caps, settings)
+        const sources = await this.d.local.sources(engine, settings.source.kind === 'platform')
+        const selfModels =
+          settings.source.kind === 'self' && settings.model ? await this.catalogIds(engine, owner, true) : null
+        const { patch } = resolvePhoneSource({}, settings, sources, selfModels)
+        delete create.source
+        Object.assign(create, patch)
+        return
+      }
+      const selection = await this.newSessionSelection(engine)
+      if (selection) {
+        checkSettings(ENGINES[engine].caps, settings)
+        if (typeof settings.model === 'string') {
+          const models = selection.models ?? (await this.catalogIds(engine, owner, true))
+          if (!models.includes(settings.model) && !selection.openModel) throw new Error('MOBILE_BAD_ARGUMENT')
+        }
+        Object.assign(create, selection.patch, { model: settings.model ?? selection.patch.model })
+        return
+      }
     }
     checkSettings(ENGINES[engine].caps, settings)
     if (typeof settings.model === 'string' && !(await this.catalogIds(engine, owner)).includes(settings.model))
       throw new Error('MOBILE_BAD_ARGUMENT')
+    return previous
+  }
+
+  private async speedOption(engine: EngineId, kind: PhoneSource['kind'], model: string | null, owner: string) {
+    if (engine === 'codex' && kind === 'platform') {
+      const allowed = platformUltrafastModel(model)
+      return { allowed, multiplier: allowed ? platformUltrafastMultiplier(model) : null }
+    }
+    if (kind !== 'self' || (engine !== 'pixel' && engine !== 'codex')) return { allowed: false, multiplier: null }
+    const catalog = (await this.d.call('engine:catalog', [engine], owner)) as EngineCatalog
+    const allowed =
+      engine === 'codex'
+        ? ultrafastEligible(catalog, model)
+        : !!catalog?.models?.find(m => (model ? m.id === model : m.isDefault))?.ultrafast
+    return { allowed, multiplier: null }
+  }
+
+  private async newSessionSelection(engine: EngineId): Promise<{
+    patch: SourcePatch
+    models: string[] | null
+    openModel?: boolean
+  } | null> {
+    const local = this.d.local
+    const choice = local?.sessionChoice?.(engine)
+    if (!choice) return null
+    if (choice.kind === 'self') return { patch: { platform: null, provider: null, model: choice.model }, models: null }
+    if (!local?.sources) throw new Error('MOBILE_UNSUPPORTED')
+    const sources = await local.sources(engine, choice.kind === 'platform')
+    if (choice.kind === 'provider') {
+      const provider = sources.providers.find(p => p.id === choice.id) ?? sources.providers[0]
+      if (!provider) throw new Error('电脑上没有为这个引擎配置可用的自定义接口')
+      const models = provider.models
+      const model = models.length && (!choice.model || !models.includes(choice.model)) ? models[0] : choice.model
+      return {
+        patch: { platform: null, provider: { id: provider.id }, model },
+        models: models.length ? models : model ? [model] : [],
+        openModel: !models.length,
+      }
+    }
+    const routes = sources.platform ?? []
+    const chosen = routes.find(line => line.id === choice.groupId && line.models.length)
+    const line =
+      choice.model && !chosen?.models.includes(choice.model)
+        ? (routes.find(line => line.models.includes(choice.model!)) ?? chosen)
+        : chosen
+    const route = line ?? routes.find(line => line.models.length)
+    if (!route || !sources.account) throw new Error(sources.platformError ?? '电脑上没有为这个引擎配置可用的平台线路')
+    const model = choice.model && route.models.includes(choice.model) ? choice.model : route.models[0]
+    return {
+      patch: { platform: { groupId: route.id, account: sources.account }, provider: null, model },
+      models: route.models,
+    }
   }
 
   /** 引擎目录里的模型 id；resolved 为 true 时连别名指向的型号一起 */

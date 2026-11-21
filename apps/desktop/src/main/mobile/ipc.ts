@@ -131,6 +131,7 @@ export function initMobile(ctx: AppContext): void {
       name: d.name,
       fingerprint: fingerprint(fromBase64Url(d.publicKey)),
       access: d.access,
+      desktopPermissions: d.desktopPermissions === true,
       pairedAt: d.pairedAt,
       lastSeenAt: d.lastSeenAt,
       online: gateway.online(d.id),
@@ -231,6 +232,11 @@ export function initMobile(ctx: AppContext): void {
     changed,
     local: {
       defaultEngine: () => ctx.engine?.defaults().engine ?? 'claude',
+      sessionChoice: engine => {
+        const choice = store.sessionChoices?.[engine]
+        if (!choice) throw new Error('电脑正在加载新会话设置，请稍后重试')
+        return choice
+      },
       account: () => {
         // 不等云端：缓存过期就后台刷新，这次先回已有的，下次打开是新的
         void refreshAccountIfStale()
@@ -244,24 +250,24 @@ export function initMobile(ctx: AppContext): void {
       quota: async provider =>
         ctx.engine ? ctx.engine.refreshAccountQuota(provider, { force: false, maxAgeMs: 60_000 }) : null,
       // 手机换额度来源（docs/mobile-app.md §14.4）：平台线路和兜底换线路同一套筛法；自定义接口只给名字和模型
-      sources: async engine => {
-        const routes = await enginePlatformRoutes(engine)
-        const providers =
-          engine === 'antigravity'
-            ? []
-            : (ctx.providers?.state().providers ?? []).filter(p => engineProviderProtocols(engine).includes(p.protocol))
+      sources: async (engine, includePlatform = true) => {
+        const routes = includePlatform ? await enginePlatformRoutes(engine) : null
+        const providers = (ctx.providers?.state().providers ?? []).filter(p =>
+          engineProviderProtocols(engine).includes(p.protocol),
+        )
         return {
-          account: 'error' in routes ? null : routes.account,
+          account: !routes || 'error' in routes ? null : routes.account,
           platform:
-            'error' in routes
+            !routes || 'error' in routes
               ? null
               : routes.lines.map(l => ({
                   id: l.group.id,
                   name: l.group.name,
                   rate: l.group.rate_multiplier,
+                  billing: l.group.billing_source,
                   models: l.models,
                 })),
-          platformError: 'error' in routes ? routes.error : null,
+          platformError: routes && 'error' in routes ? routes.error : null,
           providers: providers.map(p => ({ id: p.id, name: p.name, models: p.models.map(m => m.id) })),
         }
       },
@@ -390,6 +396,7 @@ export function initMobile(ctx: AppContext): void {
   }
 
   ipc.handle('mobile:state', () => state())
+  ipc.handle('mobile:setSessionChoices', (_event, choices) => store.setSessionChoices(choices))
   ipc.handle('mobile:setPrefs', (_e, patch: Partial<MobilePrefs>) => {
     const wasEnabled = store.prefs.enabled
     store.setPrefs(patch ?? {})
@@ -444,8 +451,8 @@ export function initMobile(ctx: AppContext): void {
     }
     await cloudCall('DELETE', `/v1/bridge/devices/${encodeURIComponent(id)}`)
   })
-  ipc.handle('mobile:setAccess', (_e, id: unknown, access: unknown) => {
-    store.setAccess(String(id), access)
+  ipc.handle('mobile:setAccess', (_e, id: unknown, access: unknown, desktopPermissions?: boolean) => {
+    store.setAccess(String(id), access, desktopPermissions)
     changed()
     return state()
   })

@@ -17,6 +17,76 @@ import '../../protocol/json.dart';
 import '../../ui/theme/tokens.dart';
 import '../../ui/theme/type.dart';
 import 'approval_card.dart' show confirm;
+import 'model_picker.dart';
+
+class EffortDefaultsButtons extends StatefulWidget {
+  const EffortDefaultsButtons({
+    super.key,
+    required this.desktop,
+    required this.engine,
+    required this.patch,
+    required this.reset,
+    required this.enabled,
+  });
+  final DesktopActions desktop;
+  final String engine;
+  final Json patch;
+  final bool enabled;
+  final ValueChanged<Json> reset;
+  @override
+  State<EffortDefaultsButtons> createState() => _EffortDefaultsButtonsState();
+}
+
+class _EffortDefaultsButtonsState extends State<EffortDefaultsButtons> {
+  late Future<Json> current = widget.desktop.effortDefaults(widget.engine);
+  @override
+  void didUpdateWidget(EffortDefaultsButtons old) {
+    super.didUpdateWidget(old);
+    if (old.engine != widget.engine) {
+      current = widget.desktop.effortDefaults(widget.engine);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => FutureBuilder<Json>(
+    future: current,
+    builder: (context, snap) {
+      if (snap.hasError) return Text(actionError(snap.error!));
+      final defaults = snap.data;
+      if (defaults == null || snap.connectionState != ConnectionState.done) {
+        return const SizedBox.shrink();
+      }
+      final changed = widget.patch.entries.any(
+        (e) => defaults[e.key] != e.value,
+      );
+      return Wrap(
+        children: [
+          TextButton(
+            onPressed: changed && widget.enabled
+                ? () => widget.reset(defaults)
+                : null,
+            child: Text(L('恢复默认', 'Restore defaults')),
+          ),
+          TextButton(
+            onPressed: changed && widget.enabled
+                ? () => setState(
+                    () => current = widget.desktop.effortDefaults(
+                      widget.engine,
+                      widget.patch,
+                    ),
+                  )
+                : null,
+            child: Text(
+              changed
+                  ? L('设为引擎默认', 'Save engine defaults')
+                  : L('已是默认', 'Using defaults'),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+}
 
 class ModeGroup {
   const ModeGroup({
@@ -70,11 +140,13 @@ class ModePanel extends StatelessWidget {
     this.busy = false,
     this.readOnly = false,
     this.header,
+    this.defaultsButtons,
   });
   final String title;
 
   /// 标题下面的一行（会话的额度简写，§17）
   final Widget? header;
+  final Widget? defaultsButtons;
   final List<ModeGroup> groups;
   final List<ModeToggle> toggles;
   final String? note;
@@ -117,6 +189,7 @@ class ModePanel extends StatelessWidget {
             ],
           ),
           ?header,
+          ?defaultsButtons,
           for (final g in groups) ...[
             Padding(
               padding: const EdgeInsets.only(top: 18, bottom: 6),
@@ -405,6 +478,40 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
   List<EngineModel>? _models;
   bool _unsupported = false;
   String? _engineLoaded;
+  bool? _checks;
+  String? _speedKey;
+  Json _speed = {};
+  @override
+  void initState() {
+    super.initState();
+    widget.actions.checks().then((v) {
+      if (mounted) setState(() => _checks = v);
+    }, onError: (Object _) {});
+  }
+
+  Future<void> changeChecks(bool on) async {
+    setState(() => _busy = true);
+    try {
+      await widget.actions.setChecks(on);
+      if (mounted) setState(() => _checks = on);
+    } catch (e) {
+      if (mounted) setState(() => _error = actionError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  void loadSpeed(String engine, String key, String? model) {
+    final next = [engine, key, model].toString();
+    if (next == _speedKey) return;
+    _speedKey = next;
+    _speed = {};
+    widget.desktop.speedOption(engine, sourcePatch(key)['source'], model).then((
+      v,
+    ) {
+      if (mounted && _speedKey == next) setState(() => _speed = v);
+    }, onError: (Object _) {});
+  }
 
   /// 电脑上配好的来源；旧电脑、读不到时为 null（不显示来源那组）
   PhoneSources? _sources;
@@ -415,7 +522,7 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
     _sourcesEngine = engine;
     _sources = null;
     widget.desktop.sources(engine).then((s) {
-      if (mounted) setState(() => _sources = s);
+      if (mounted && _sourcesEngine == engine) setState(() => _sources = s);
     }, onError: (Object _) {});
   }
 
@@ -429,7 +536,7 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
         .catalog(engine)
         .then(
           (m) {
-            if (mounted) setState(() => _models = m);
+            if (mounted && _engineLoaded == engine) setState(() => _models = m);
           },
           onError: (Object e) {
             if (mounted) {
@@ -490,16 +597,72 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
         }
         final flags = objOrNull(widget.session.view.snapshot?['flags']);
         final fast = fastStatus(flags);
+        if (sources?.composer == true) {
+          loadSpeed(engine, sourceKey(record), model);
+        }
+        final pixelSpeed = objOrNull(flags?['pixelSpeed']);
+        final ultra =
+            _speed['allowed'] == true ||
+            engine == 'pixel' &&
+                pixelSpeed?['model'] == model &&
+                pixelSpeed?['ultrafast'] == true;
         final canAct = widget.actions.canAct;
         return ModePanel(
           title: L('这个会话的模式', 'Conversation mode'),
-          header: quotaProvider == null
-              ? null
-              : QuotaLine(
+          header: Column(
+            children: [
+              if (quotaProvider != null)
+                QuotaLine(
                   key: ValueKey(quotaProvider),
                   deviceId: widget.desktop.deviceId,
                   provider: quotaProvider,
                 ),
+              if (sources?.composer == true)
+                TextButton(
+                  onPressed: !canAct || _busy
+                      ? null
+                      : () async {
+                          final c = await pickPhoneModel(
+                            context,
+                            widget.desktop,
+                          );
+                          if (c != null && mounted) {
+                            await _apply({
+                              'engine': c['engine'],
+                              'source': c['source'],
+                              'model': c['model'],
+                              'effort': null,
+                              'fast': false,
+                              'ultrafast': false,
+                            });
+                          }
+                        },
+                  child: Text(L('搜索全部模型和线路', 'Search models and routes')),
+                ),
+            ],
+          ),
+          defaultsButtons: sources?.composer == true
+              ? EffortDefaultsButtons(
+                  desktop: widget.desktop,
+                  engine: engine,
+                  enabled: canAct && !_busy,
+                  patch: {
+                    if (caps?.efforts.isNotEmpty == true) 'effort': effort,
+                    if (caps?.fast == true) 'fast': record['fast'] == true,
+                    if (caps?.thinkingSummaries == true)
+                      'thinkingSummaries': record['thinkingSummaries'] == true,
+                  },
+                  reset: (d) => _apply({
+                    if (caps?.efforts.isNotEmpty == true) 'effort': d['effort'],
+                    if (caps?.fast == true) ...{
+                      'fast': d['fast'],
+                      'ultrafast': false,
+                    },
+                    if (caps?.thinkingSummaries == true)
+                      'thinkingSummaries': d['thinkingSummaries'],
+                  }),
+                )
+              : null,
           busy: _busy,
           readOnly: !canAct || _unsupported,
           error:
@@ -557,11 +720,15 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
               ),
             ModeGroup(
               title: L('权限', 'Permissions'),
-              options: permissionOptions(engine, level),
+              options: permissionOptions(
+                engine,
+                level,
+                desktopPermissions: sources?.desktopPermissions == true,
+              ),
               value: level ?? '',
               onPick: (v) async {
                 if (widens(level, v) &&
-                    !await confirm(context, widenConfirm())) {
+                    !await confirm(context, permissionConfirm(v))) {
                   return;
                 }
                 await _apply(
@@ -572,7 +739,11 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
                   ? ModeToggle(
                       label: L('先出计划', 'Plan first'),
                       hint: planning
-                          ? planAfterText(record)
+                          ? planAfterText(
+                              record,
+                              desktopPermissions:
+                                  sources?.desktopPermissions == true,
+                            )
                           : L(
                               '只读代码、写计划，你批准后再动手',
                               'Reads code and writes a plan; changes start after you approve',
@@ -582,9 +753,10 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
                         v
                             ? {'permissionMode': 'plan'}
                             : {
-                                'permissionMode': planOffMode(
-                                  planReturnOf(record),
-                                ),
+                                'permissionMode':
+                                    sources?.desktopPermissions == true
+                                    ? planReturnOf(record)
+                                    : planOffMode(planReturnOf(record)),
                               },
                       ),
                     )
@@ -640,6 +812,24 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
             ),
           ],
           toggles: [
+            if (_checks != null)
+              ModeToggle(
+                label: L('做完自动检查', 'Run checks after each turn'),
+                value: _checks!,
+                onChanged: changeChecks,
+              ),
+            if (ultra)
+              ModeToggle(
+                label: _speed['multiplier'] == null
+                    ? 'Ultrafast'
+                    : 'Ultrafast ×${_speed['multiplier']}',
+                value: record['ultrafast'] == true,
+                onChanged: (on) async {
+                  if (!on || await confirm(context, fastConfirm())) {
+                    await _apply({'fast': true, 'ultrafast': on});
+                  }
+                },
+              ),
             if (caps?.fast == true)
               ModeToggle(
                 label: L('快速模式', 'Fast mode'),
@@ -650,7 +840,7 @@ class _SessionModeSheetState extends State<SessionModeSheet> {
                 value: record['fast'] == true,
                 onChanged: (v) async {
                   if (v && !await confirm(context, fastConfirm())) return;
-                  await _apply({'fast': v});
+                  await _apply({'fast': v, 'ultrafast': false});
                 },
               ),
             if (caps?.thinkingSummaries == true)

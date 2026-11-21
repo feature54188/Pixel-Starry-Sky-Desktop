@@ -29,7 +29,10 @@ class SourceProvider {
 /// 电脑上配好的来源（网关 PhoneSources）
 class PhoneSources {
   PhoneSources(Json j)
-    : platform = j['platform'] is List
+    : canPickSource = j['canPickSource'] == true,
+      composer = j['composer'] == true,
+      desktopPermissions = j['desktopPermissions'] == true,
+      platform = j['platform'] is List
           ? [for (final g in objList(j['platform'])) SourceLine(g)]
           : null,
       platformError = str(j['platformError']),
@@ -37,6 +40,9 @@ class PhoneSources {
 
   /// 平台线路，倍率从低到高；电脑没登录、余额不足、读不到时为 null（原因在 platformError）
   final List<SourceLine>? platform;
+  final bool canPickSource;
+  final bool composer;
+  final bool desktopPermissions;
   final String? platformError;
   final List<SourceProvider> providers;
 

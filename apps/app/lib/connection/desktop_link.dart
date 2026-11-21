@@ -51,6 +51,7 @@ class Hello {
     required this.access,
     this.tools = false,
     this.queueMoveBefore = false,
+    this.desktopPermissions = false,
   });
   final num version;
   final String name;
@@ -63,6 +64,7 @@ class Hello {
 
   /// 电脑认得队列调序的 { before: 消息 id | null }
   final bool queueMoveBefore;
+  final bool desktopPermissions;
 
   static Hello parse(Object? raw) {
     final m = raw is Map ? raw : const {};
@@ -70,6 +72,7 @@ class Hello {
       version: m['version'] is num ? m['version'] as num : -1,
       name: m['name'] is String ? m['name'] as String : '',
       access: m['access'] == 'act' ? 'act' : 'view',
+      desktopPermissions: m['desktopPermissions'] == true,
       tools: m['tools'] == true,
       queueMoveBefore: m['queueMoveBefore'] == true,
     );

@@ -265,6 +265,16 @@ export function MobileSection() {
               <Button variant="ghost" onClick={() => setRemoving(row)}>
                 {t('mobile.revoke')}
               </Button>
+              {row.device?.access === 'act' && (
+                <label className="flex items-center gap-2 text-label">
+                  <input
+                    type="checkbox"
+                    checked={row.device.desktopPermissions === true}
+                    onChange={e => run(bridge.setAccess(row.id, 'act', e.target.checked))}
+                  />
+                  {t('mobile.access.desktopPermissions')}
+                </label>
+              )}
             </li>
           ))}
         </ul>

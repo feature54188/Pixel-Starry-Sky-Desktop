@@ -614,12 +614,13 @@ const channels: ChannelsBridge = {
 // 手机远程连接：设置 › 手机（docs/mobile-remote.md §5.4）
 const mobile: MobileBridge = {
   state: () => call('mobile:state'),
+  setSessionChoices: choices => call('mobile:setSessionChoices', choices),
   setPrefs: patch => call('mobile:setPrefs', patch),
   pairStart: () => call('mobile:pairStart'),
   pairCancel: () => call('mobile:pairCancel'),
   pairDecide: accept => call('mobile:pairDecide', accept),
   revoke: id => call('mobile:revoke', id),
-  setAccess: (id, access) => call('mobile:setAccess', id, access),
+  setAccess: (id, access, desktopPermissions) => call('mobile:setAccess', id, access, desktopPermissions),
   seats: () => call('mobile:seats'),
   removeCloudDevice: id => call('mobile:removeCloudDevice', id),
   onChange: cb => {

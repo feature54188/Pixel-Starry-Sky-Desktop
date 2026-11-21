@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { classifyError, platformNoticeText } from '../session/live/errorKind'
 import {
   agyGroupModels,
@@ -207,4 +207,51 @@ describe('新装还没选过时的默认来源', () => {
     expect(fallbackSource('codex', null)).toBe('self')
     expect(fallbackSource('pixel', null)).toBe('platform')
   })
+})
+
+it('手机在主窗口启动时继承已保存的 Codex 接口，设置窗口换接口后跟随更新', async () => {
+  const engineKey = 'pixelsky.sources.v2'
+  const saved = (id: string) => JSON.stringify({ codex: { source: 'custom', providerId: id, customModel: 'gpt-test' } })
+  const values = new Map([[engineKey, saved('existing')]])
+  const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => values.set(k, v) }
+  const win = new EventTarget()
+  const setSessionChoices = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('localStorage', storage)
+  vi.stubGlobal(
+    'window',
+    Object.assign(win, {
+      pixelsky: {
+        account: { getState: async () => ({ status: 'signed-out' }), onChange: vi.fn() },
+        mobile: { setSessionChoices },
+      },
+    }),
+  )
+  try {
+    vi.resetModules()
+    const { startMobileSessionChoices, saveDefault } = await import('./platform')
+    startMobileSessionChoices()
+    await vi.waitFor(() =>
+      expect(setSessionChoices).toHaveBeenCalledWith(
+        expect.objectContaining({
+          codex: { kind: 'provider', id: 'existing', model: 'gpt-test' },
+        }),
+      ),
+    )
+    values.set(engineKey, saved('switched'))
+    win.dispatchEvent(
+      Object.assign(new Event('storage'), { key: engineKey, storageArea: storage, newValue: saved('switched') }),
+    )
+    expect(setSessionChoices).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        codex: { kind: 'provider', id: 'switched', model: 'gpt-test' },
+      }),
+    )
+    saveDefault({ source: 'self', selfModel: null }, 'codex')
+    expect(setSessionChoices).toHaveBeenLastCalledWith(
+      expect.objectContaining({ codex: { kind: 'self', model: null } }),
+    )
+  } finally {
+    vi.unstubAllGlobals()
+    vi.resetModules()
+  }
 })

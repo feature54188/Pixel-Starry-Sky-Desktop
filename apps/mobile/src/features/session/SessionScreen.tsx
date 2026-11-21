@@ -152,7 +152,7 @@ export function SessionScreen({
   }, [inTriage, seenPending, pending])
 
   const answer = async (d: ApprovalDecision) => {
-    if (link && pending) await link.call('engine:answer', sessionId, pending.requestId, d)
+    if (link && pending) await link.call('engine:answer', sessionId, pending.requestId, d, 'keepPlanReturn')
   }
 
   // 全屏看图、出错后重试（连点只发一次）

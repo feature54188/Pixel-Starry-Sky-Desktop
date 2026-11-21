@@ -1347,7 +1347,10 @@ describe('MobileGateway session settings', () => {
       { id: 'p2', name: '没列模型', models: [] },
     ],
   })
-  function settingsSetup(sources: DesktopSources | null = desktopSources()) {
+  function settingsSetup(
+    sources: DesktopSources | null = desktopSources(),
+    sessionChoice?: import('../../shared/types/mobile').MobileSessionChoice,
+  ) {
     const calls: [string, unknown[]][] = []
     const t = setup({
       call: async (channel, args) => {
@@ -1387,6 +1390,7 @@ describe('MobileGateway session settings', () => {
       local: {
         defaultEngine: () => 'codex',
         search: async () => ({}) as never,
+        ...(sessionChoice ? { sessionChoice: () => sessionChoice } : {}),
         ...(sources ? { sources: async () => sources } : {}),
       },
     })
@@ -1547,7 +1551,7 @@ describe('MobileGateway session settings', () => {
     expect(mutations()).toHaveLength(before)
   })
 
-  it('拒绝不在列表里的来源、线路、接口和模型，电脑没登录平台时不能换到平台，新建时不能选来源', async () => {
+  it('拒绝不在列表里的来源、线路、接口和模型，电脑没登录平台时不能换到平台', async () => {
     const { t, mutations } = settingsSetup()
     const p = await paired(t)
     const bad = (id: string, patch: unknown) =>
@@ -1558,14 +1562,42 @@ describe('MobileGateway session settings', () => {
     await bad('cc', { source: { kind: 'platform', groupId: '34' }, model: 'm1' })
     await bad('cc', { source: { kind: 'mine' } })
     await bad('cc', { source: 'self' })
-    await expect(p.call('engine:createSession', { projectId: 'proj', source: { kind: 'self' } })).rejects.toThrow(
-      'MOBILE_BAD_ARGUMENT',
-    )
+    await expect(
+      p.call('engine:createSession', { projectId: 'proj', source: { kind: 'provider', id: 'gone' } }),
+    ).rejects.toThrow('MOBILE_BAD_ARGUMENT')
     expect(mutations()).toEqual([])
     const signedOut = await paired(settingsSetup(desktopSources(null)).t)
     await expect(
       signedOut.call('engine:updateSession', 'cc', { source: { kind: 'platform', groupId: '34' } }),
     ).rejects.toThrow('MOBILE_BAD_ARGUMENT')
+  })
+
+  it('新会话可单独选来源和模型，不修改桌面默认，并拒绝跨来源的模型', async () => {
+    const { t, mutations } = settingsSetup(desktopSources(), { kind: 'self', model: 'opus' })
+    const phone = await paired(t)
+    expect(await phone.call('sources', 'codex', 'newSession')).toMatchObject({ canPickSource: true })
+    const create = (settings: Record<string, unknown>) =>
+      phone.call('engine:createSession', { projectId: 'proj', ...settings })
+    await create({ source: { kind: 'provider', id: 'p1' }, model: 'm2', thinkingSummaries: true })
+    expect(mutations().at(-1)?.[1]).toEqual([
+      {
+        projectId: 'proj',
+        engine: 'codex',
+        provider: { id: 'p1' },
+        platform: null,
+        model: 'm2',
+        thinkingSummaries: true,
+      },
+    ])
+    await create({ source: { kind: 'provider', id: 'p2' } })
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({ provider: { id: 'p2' }, model: null })
+    await create({ source: { kind: 'platform', groupId: '34' }, model: 'gpt-6' })
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({ platform: { groupId: '34' }, model: 'gpt-6' })
+    await expect(create({ source: { kind: 'platform', groupId: '34' }, model: 'm2' })).rejects.toThrow(
+      'MOBILE_BAD_ARGUMENT',
+    )
+    await create({})
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({ provider: null, platform: null, model: 'opus' })
   })
 
   it('lets a session that is full on the desktop only come down, never go back up', async () => {
@@ -1578,6 +1610,54 @@ describe('MobileGateway session settings', () => {
     // 只改模型不动权限：照常
     await p.call('engine:updateSession', 'open', { model: 'sonnet' })
     expect(mutations().map(c => (c[1][1] as { permissionMode?: string }).permissionMode)).toEqual(['edits', undefined])
+  })
+
+  it('only accepts desktop-granted permissions for the paired device and honors revocation', async () => {
+    const { t, mutations } = settingsSetup()
+    const phone = await paired(t)
+    const device = t.devices.find(d => d.id === 'p1')!
+    const settings = { permissionMode: 'plan', planReturn: 'full' }
+    await expect(phone.call('engine:updateSession', 'cx', settings, 'modelChoice')).rejects.toThrow(
+      'MOBILE_BAD_ARGUMENT',
+    )
+    device.desktopPermissions = true
+    await phone.call('engine:updateSession', 'cx', settings)
+    await phone.call('engine:createSession', { projectId: 'proj', engine: 'codex', permissionMode: 'auto' })
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({ permissionMode: 'auto' })
+    expect(await phone.call('sources', 'codex', 'composer')).toMatchObject({ desktopPermissions: true })
+    device.desktopPermissions = false
+    await expect(phone.call('engine:updateSession', 'cx', settings)).rejects.toThrow('MOBILE_BAD_ARGUMENT')
+    device.access = 'view'
+    await expect(phone.call('projectTools:setSessionChecks', 'cx', true)).rejects.toThrow('MOBILE_FORBIDDEN')
+  })
+
+  it('checks the model against the selected destination engine and route, and sends session check settings to the host', async () => {
+    const { t, mutations } = settingsSetup()
+    const phone = await paired(t)
+    expect(await phone.call('modelChoices', 'codex', 'platform')).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ engine: 'codex', model: 'gpt-6', source: { kind: 'platform', groupId: '34' } }),
+      ]),
+    )
+    await phone.call(
+      'engine:updateSession',
+      'cc',
+      { engine: 'codex', model: 'gpt-6', source: { kind: 'platform', groupId: '34' } },
+      'modelChoice',
+    )
+    expect(mutations().at(-1)?.[1][1]).toMatchObject({
+      engine: 'codex',
+      model: 'gpt-6',
+      platform: { groupId: '34', account: 'me@x.com' },
+    })
+    expect(
+      await phone.call('speedOption', 'codex', { kind: 'platform', groupId: '34' }, 'gpt-6.2-astra'),
+    ).toMatchObject({ allowed: true })
+    expect(await phone.call('speedOption', 'codex', { kind: 'provider', id: 'p1' }, 'gpt-6.2-astra')).toMatchObject({
+      allowed: false,
+    })
+    await phone.call('projectTools:setSessionChecks', 'cc', true)
+    expect(mutations().at(-1)).toEqual(['projectTools:setSessionChecks', [{ sessionId: 'cc' }, true]])
   })
 
   it('refuses setting changes from a view-only phone', async () => {
@@ -1635,6 +1715,44 @@ describe('MobileGateway session settings', () => {
       p.call('engine:createSession', { projectId: 'proj', engine: 'claude', effort: 'ultra' }),
     ).rejects.toThrow('MOBILE_BAD_ARGUMENT')
     expect(mutations()).toHaveLength(2)
+  })
+
+  it('uses the desktop Codex provider for both model choices and creation without requesting a signed-in engine catalog', async () => {
+    const { t, calls, mutations } = settingsSetup(desktopSources(), { kind: 'provider', id: 'p1', model: 'm2' })
+    const phone = await paired(t)
+    expect(await phone.call('engine:catalog', 'codex', 'newSession')).toMatchObject({
+      currentModel: 'm2',
+      models: [
+        { id: 'm1', isDefault: false },
+        { id: 'm2', isDefault: true },
+      ],
+    })
+    await phone.call('engine:createSession', { projectId: 'proj', provider: { id: 'injected' } })
+    expect(mutations().at(-1)?.[1]).toEqual([
+      { projectId: 'proj', engine: 'codex', model: 'm2', provider: { id: 'p1' }, platform: null },
+    ])
+    await phone.call('engine:createSession', { projectId: 'proj', model: 'm1', effort: 'high' })
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({ model: 'm1', provider: { id: 'p1' }, effort: 'high' })
+    await expect(phone.call('engine:createSession', { projectId: 'proj', model: 'opus' })).rejects.toThrow(
+      'MOBILE_BAD_ARGUMENT',
+    )
+    expect(calls.some(([channel]) => channel === 'engine:catalog')).toBe(false)
+  })
+
+  it('creates on the desktop platform line using its current account and never falls back to self on a route error', async () => {
+    const sources = desktopSources()
+    const { t, mutations } = settingsSetup(sources, { kind: 'platform', groupId: '34', model: 'gpt-6' })
+    const phone = await paired(t)
+    await phone.call('engine:createSession', { projectId: 'proj' })
+    expect(mutations().at(-1)?.[1][0]).toMatchObject({
+      platform: { groupId: '34', account: sources.account },
+      provider: null,
+      model: 'gpt-6',
+    })
+    sources.platform = null
+    sources.platformError = '平台线路读取失败'
+    await expect(phone.call('engine:createSession', { projectId: 'proj' })).rejects.toThrow(sources.platformError)
+    expect(mutations()).toHaveLength(1)
   })
 
   it('checks rename, pin and archive arguments', async () => {

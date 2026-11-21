@@ -784,6 +784,7 @@ export const IPC_CONTRACT = {
   'mobile:setAccess': { kind: 'invoke', route: 'local', trust: 'sender' },
   'mobile:setPrefs': { kind: 'invoke', route: 'local', trust: 'sender' },
   'mobile:state': { kind: 'invoke', route: 'local', trust: 'sender' },
+  'mobile:setSessionChoices': { kind: 'invoke', route: 'local', trust: 'sender' },
   // 消息通道（docs/ui/one-click-connectors.md）：设置 › 消息通道。只在本机
   'im:changed': { kind: 'push', route: 'push', trust: 'none' },
   'im:connect': { kind: 'invoke', route: 'local', trust: 'sender' },

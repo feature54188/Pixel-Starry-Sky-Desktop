@@ -84,17 +84,25 @@ const PERMISSION_HINT = (): Partial<Record<PermissionMode, string>> => ({
 /** 往更宽的权限切（要确认一次） */
 export const widens = (from: PermissionMode | null, to: PermissionMode): boolean => RANK[to] > RANK[from ?? 'ask']
 
-export function permissionOptions(engine: EngineId, current: PermissionMode | null): ModeOption[] {
+export function permissionOptions(
+  engine: EngineId,
+  current: PermissionMode | null,
+  desktopPermissions = false,
+  separatePlan = false,
+): ModeOption[] {
   const caps = ENGINES[engine]?.caps.permissionModes ?? PHONE_MODES
   const labels = PERMISSION()
   const hints = PERMISSION_HINT()
-  const out: ModeOption[] = PHONE_MODES.filter(m => caps.includes(m)).map(m => ({
-    value: m,
-    label: labels[m],
-    hint: hints[m],
-  }))
+  const levels: PermissionMode[] = desktopPermissions ? ['ask', 'edits', 'auto', 'full'] : PHONE_MODES
+  const out: ModeOption[] = levels
+    .filter(m => caps.includes(m) && !(separatePlan && m === 'plan'))
+    .map(m => ({
+      value: m,
+      label: labels[m],
+      hint: hints[m],
+    }))
   // 电脑上已经是完全放行 / 自动审核：显示出来但选不了，只能往下降
-  if (current === 'full' || current === 'auto')
+  if (!desktopPermissions && (current === 'full' || current === 'auto'))
     out.push({
       value: current,
       label: labels[current],
@@ -198,4 +206,15 @@ export function effortOptions(engine: EngineId, model: EngineModel | undefined, 
   ]
   if (current && !efforts.includes(current)) out.push({ value: current, label: labels[current] ?? current })
   return out
+}
+
+export function confirmPermission(from: PermissionMode | null, to: PermissionMode) {
+  if (!widens(from, to)) return true
+  return confirm(
+    to === 'full'
+      ? L('完全放行会跳过命令和文件操作审批。开启吗？', 'Enable full access without command or file approvals?')
+      : to === 'auto'
+        ? L('由电脑的审核模型审批操作。开启自动审核吗？', 'Let the computer’s review model approve operations?')
+        : L('允许自动改文件吗？', 'Allow automatic file edits?'),
+  )
 }

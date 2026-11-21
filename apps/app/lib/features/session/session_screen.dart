@@ -701,7 +701,12 @@ class _SessionScreenState extends State<SessionScreen> {
                         onAnswer: (d) => _actions.answer(pending.requestId, d),
                         onStop: running ? () => _actions.interrupt() : null,
                         planNote: pending.kind == 'plan'
-                            ? planAfterText(record)
+                            ? planAfterText(
+                                record,
+                                desktopPermissions:
+                                    _actions.link?.hello?.desktopPermissions ==
+                                    true,
+                              )
                             : null,
                       )
                     else ...[

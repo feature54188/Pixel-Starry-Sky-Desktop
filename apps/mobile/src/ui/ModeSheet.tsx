@@ -1,6 +1,7 @@
 // 改模式的面板（docs/mobile-remote.md §21.5）：几组单选（权限模式、模型、强度）加几个开关。
 // 只管画，选项和规则由调用方算好传进来（data/mode.ts）；窄屏从底部弹出，宽屏是右侧面板（Sheet）。
 // iOS 样子：分组小标题、整行可点的选项（选中的右边打勾）、行与行之间一条细线、开关在行右边；选项少的一组（强度）可以画成分段按钮。
+import { L } from '@/i18n'
 import { Check } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Sheet } from './sheet'
@@ -45,6 +46,8 @@ export function ModeSheet({
   error,
   busy,
   readOnly,
+  modelPicker,
+  defaultsActions,
   onClose,
 }: {
   title: ReactNode
@@ -57,6 +60,8 @@ export function ModeSheet({
   busy?: boolean
   /** 只看档的手机：只显示当前值 */
   readOnly?: boolean
+  modelPicker?: () => void
+  defaultsActions?: { changed: boolean; save(): void; reset(): void }
   onClose(): void
 }) {
   const locked = busy || readOnly
@@ -79,6 +84,16 @@ export function ModeSheet({
       }
     >
       <div className="flex flex-col gap-5 px-5 pt-1 pb-3">
+        {modelPicker && (
+          <button
+            type="button"
+            disabled={locked}
+            className="min-h-11 rounded-xl border border-line-subtle px-3 text-left"
+            onClick={modelPicker}
+          >
+            {L('搜索全部模型和线路', 'Search models and routes')}
+          </button>
+        )}
         {groups.map(g => {
           const seg = g.segmented && g.options.length <= 5 && !g.options.some(o => o.hint || o.disabled)
           return (
@@ -121,6 +136,16 @@ export function ModeSheet({
             </section>
           )
         })}
+        {defaultsActions && (
+          <div className="flex justify-end gap-3 text-label">
+            <button disabled={locked || !defaultsActions.changed} onClick={defaultsActions.reset}>
+              {L('恢复默认', 'Restore defaults')}
+            </button>
+            <button disabled={locked || !defaultsActions.changed} onClick={defaultsActions.save}>
+              {defaultsActions.changed ? L('设为引擎默认', 'Save engine defaults') : L('已是默认', 'Using defaults')}
+            </button>
+          </div>
+        )}
         {toggles.length > 0 && (
           <section className="flex flex-col">
             {toggles.map((t, i) => (

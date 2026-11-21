@@ -66,6 +66,10 @@ export const mobileMessages = {
   'mobile.online': { zh: '已连接', en: 'Connected' },
   'mobile.lastSeen': { zh: '上次连接 {p0}', en: 'Last connected {p0}' },
   'mobile.neverSeen': { zh: '还没连接过', en: 'Never connected' },
+  'mobile.access.desktopPermissions': {
+    zh: '允许此手机开启自动审核和完全放行',
+    en: 'Allow this phone to enable auto-review and full access',
+  },
   'mobile.access.act': { zh: '可审批和发消息', en: 'Can approve and send' },
   'mobile.access.view': { zh: '只看', en: 'View only' },
   'mobile.revoke': { zh: '移除', en: 'Remove' },

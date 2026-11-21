@@ -126,7 +126,7 @@ class SessionActions {
 
   /// 审批 / 提问的决定：{type: allow | deny | allow_always(scope) | answer(answers)}
   Future<void> answer(String requestId, Json decision) =>
-      _call('engine:answer', [requestId, decision]);
+      _call('engine:answer', [requestId, decision, 'keepPlanReturn']);
 
   // 队列
   Future<void> runQueuedNow(String id) => _call('engine:runQueuedNow', [id]);
@@ -167,7 +167,14 @@ class SessionActions {
   Future<void> cancelSideQuestion() => _call('engine:cancelSideQuestion');
 
   /// 改设置：permissionMode / model / effort / fast / thinkingSummaries
-  Future<void> update(Json patch) => _call('engine:updateSession', [patch]);
+  Future<void> update(Json patch) => _call('engine:updateSession', [
+    patch,
+    if (patch.containsKey('engine')) 'modelChoice',
+  ]);
+  Future<bool> checks() async =>
+      await _call('projectTools:sessionChecks') == true;
+  Future<void> setChecks(bool on) =>
+      _call('projectTools:setSessionChecks', [on]);
   Future<void> rename(String title) => _call('engine:renameSession', [title]);
   Future<void> pin(bool pinned) => _call('engine:setSessionPinned', [pinned]);
 
@@ -193,15 +200,20 @@ class DesktopActions {
   static final _catalogs = <String, List<EngineModel>>{};
 
   /// 引擎的模型目录；同一台电脑、同一个引擎只取一次。旧电脑抛 MOBILE_UNSUPPORTED，别的错当作没有目录
-  Future<List<EngineModel>> catalog(String engine) async {
+  Future<List<EngineModel>> catalog(
+    String engine, {
+    bool newSession = false,
+  }) async {
     final key = '$deviceId/$engine';
     final cached = _catalogs[key];
-    if (cached != null) return cached;
+    if (!newSession && cached != null) return cached;
     try {
-      final r = obj(await _call('engine:catalog', [engine]));
-      return _catalogs[key] = [
-        for (final m in objList(r['models'])) EngineModel(m),
-      ];
+      final r = obj(
+        await _call('engine:catalog', [engine, if (newSession) 'newSession']),
+      );
+      final models = [for (final m in objList(r['models'])) EngineModel(m)];
+      if (!newSession) _catalogs[key] = models;
+      return models;
     } catch (e) {
       if ('$e' == 'MOBILE_UNSUPPORTED') rethrow;
       return const [];
@@ -209,8 +221,24 @@ class DesktopActions {
   }
 
   /// 这个引擎在电脑上配好的额度来源（docs/mobile-app.md §14.4）；旧电脑抛 MOBILE_UNSUPPORTED
-  Future<PhoneSources> sources(String engine) async =>
-      PhoneSources(obj(await _call('sources', [engine])));
+  Future<PhoneSources> sources(
+    String engine, {
+    bool newSession = false,
+  }) async => PhoneSources(
+    obj(
+      await _call('sources', [engine, newSession ? 'newSession' : 'composer']),
+    ),
+  );
+
+  Future<Json> effortDefaults(String engine, [Json? patch]) async =>
+      obj(await _call('effortDefaults', [engine, ?patch]));
+  Future<List<Json>> modelChoices(String engine, String kind) async =>
+      objList(await _call('modelChoices', [engine, kind]));
+  Future<Json> speedOption(
+    String engine,
+    Object? source,
+    String? model,
+  ) async => obj(await _call('speedOption', [engine, source, model]));
 
   /// 电脑上设的默认引擎；旧电脑、取不到为 null
   Future<String?> defaultEngine() async {

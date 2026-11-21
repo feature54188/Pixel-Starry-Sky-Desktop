@@ -42,6 +42,23 @@ describe('MobileStore', () => {
     expect(store.fingerprint()).toBeNull()
   })
 
+  it('restores desktop session choices after restart and stores only source identifiers', async () => {
+    const self = { kind: 'self', model: null }
+    const store = new MobileStore(dir, cipher(), defaults)
+    expect(store.sessionChoices).toBeUndefined()
+    const choices = {
+      claude: self,
+      codex: { kind: 'provider', id: 'api1', model: 'custom-model' },
+      pixel: { kind: 'platform', groupId: 'group1', model: 'platform-model' },
+      antigravity: self,
+      dot: self,
+    }
+    store.setSessionChoices({ ...choices, codex: { ...choices.codex, apiKey: 'secret' } })
+    expect(() => store.setSessionChoices({ ...choices, codex: { kind: 'unknown' } })).toThrow('MOBILE_BAD_ARGUMENT')
+    expect(await readFile(join(dir, 'devices.json'), 'utf8')).not.toContain('secret')
+    expect(new MobileStore(dir, cipher(), defaults).sessionChoices).toEqual(choices)
+  })
+
   it('forgets paired phones when the desktop key had to be replaced', async () => {
     const a = new MobileStore(dir, cipher(), defaults)
     a.keypair()

@@ -1,10 +1,11 @@
 // 手机端（docs/mobile-remote.md §5）：主进程和设置 › 手机之间传的东西
-import type { Item, SessionSnapshot } from '@pixelsky/protocol'
+import type { EngineId, Item, SessionSnapshot } from '@pixelsky/protocol'
 
 /** 手机的权限档位：只看，或者也能审批、发消息、停止、新建任务 */
 export type MobileAccess = 'view' | 'act'
 
 export interface MobileDevice {
+  desktopPermissions?: boolean
   /** 手机在中转上的 ID，配对时由手机生成 */
   id: string
   name: string
@@ -105,3 +106,9 @@ export interface ItemDetail {
   item: Item
   truncated: boolean
 }
+/** 桌面新会话选择。接口密钥和平台账号由主进程在创建时取得。 */
+export type MobileSessionChoice =
+  | { kind: 'self'; model: string | null }
+  | { kind: 'platform'; groupId: string | null; model: string | null }
+  | { kind: 'provider'; id: string | null; model: string | null }
+export type MobileSessionChoices = Record<EngineId, MobileSessionChoice>

@@ -3,8 +3,9 @@ import { tr } from '../../i18n/core'
 // - 目录：管理员公开且当前账号有权限的分组，每个分组的模型一次读齐（先选模型、再选线路）。
 // - 全局默认：额度来源、平台的分组和模型、自有时的模型；新任务都用它。已开始的会话用自己记录里的选择（features/engine/hooks.ts）。
 import { useEffect, useSyncExternalStore } from 'react'
-import { ENGINES, type EngineId } from '@pixelsky/protocol'
+import { ENGINES, ENGINE_ORDER, type EngineId } from '@pixelsky/protocol'
 import type { AccountState } from '../../../../shared/types/account'
+import type { MobileSessionChoice, MobileSessionChoices } from '../../../../shared/types/mobile'
 import type { PlatformGroupInfo, PlatformKeyMode } from '../../../../shared/types/platform-catalog'
 import { platformModelsForEngine } from '../../../../shared/platform-models'
 import { demo } from '@/data/demo'
@@ -178,6 +179,29 @@ let state: PlatformState = {
   hiddenModels: readHidden(),
 }
 const listeners = new Set<() => void>()
+let accountReady = false
+let syncFromMainWindow = false
+let lastMobileChoices = ''
+function syncMobileChoices(): void {
+  const bridge = window.pixelsky?.mobile
+  if (!syncFromMainWindow || !accountReady || window.pixelsky?.demo || !bridge?.setSessionChoices) return
+  const choice = (engine: EngineId): MobileSessionChoice => {
+    const p = getPlatformState(engine)
+    // 目录暂时读失败时保留已选的线路，避免断网覆盖已保存的选择。
+    const saved = engine === 'claude' ? state : enginePreferences[engine]
+    if (p.source === 'platform')
+      return { kind: 'platform', groupId: p.groupId ?? saved.groupId, model: p.model ?? saved.model }
+    if (p.source === 'custom') return { kind: 'provider', id: p.providerId, model: p.customModel }
+    return { kind: 'self', model: p.selfModel }
+  }
+  const choices = Object.fromEntries(ENGINE_ORDER.map(id => [id, choice(id)])) as MobileSessionChoices
+  const key = JSON.stringify(choices)
+  if (key === lastMobileChoices) return
+  lastMobileChoices = key
+  void bridge.setSessionChoices(choices).catch(() => {
+    if (key === lastMobileChoices) lastMobileChoices = ''
+  })
+}
 // 其他窗口或设置云同步改了默认来源 / 线路 / 模型（docs/ui/settings-sync.md）：重新读，线路不可用时照常回到默认
 if (typeof window !== 'undefined')
   window.addEventListener('storage', e => {
@@ -194,6 +218,7 @@ if (typeof window !== 'undefined')
       }
     } else return
     projections = {}
+    syncMobileChoices()
     listeners.forEach(fn => fn())
   })
 let started = false
@@ -213,6 +238,7 @@ function set(patch: Partial<PlatformState>, persist = false): void {
       /* 存不下也能用当前选择 */
     }
   }
+  if (typeof window !== 'undefined') syncMobileChoices()
   listeners.forEach(fn => fn())
 }
 
@@ -545,6 +571,8 @@ function start(): void {
     if (email === state.email) {
       // 启动时没登录（email 和初始值一样是 null）：新装就把默认定为自有
       if (initial && unsaved) set({ source: 'self' }, true)
+      accountReady = true
+      syncMobileChoices()
       return
     }
     generation++
@@ -571,6 +599,8 @@ function start(): void {
       !!email || unsaved,
     )
     if (email) void refreshPlatform()
+    accountReady = true
+    syncMobileChoices()
   }
   account.onChange(next => {
     pushed = true
@@ -582,6 +612,13 @@ function start(): void {
       if (!pushed) apply(next, true)
     })
     .catch(() => undefined)
+}
+
+/** 手机跟随主窗口的默认设置，独立设置窗口的修改通过 storage 事件传过来。 */
+export function startMobileSessionChoices(): void {
+  syncFromMainWindow = true
+  start()
+  syncMobileChoices()
 }
 
 /** 不按引擎筛的目录：模型通道菜单要看一个平台模型能交给哪些引擎跑（docs/ui/model-channels.md §2.5） */

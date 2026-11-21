@@ -67,10 +67,10 @@ String planOffMode(String ret) =>
     ret == 'full' || ret == 'auto' ? 'edits' : ret;
 
 /// 计划卡、开关下面的一句：批准后按哪一档去做
-String planAfterText(Json record) {
+String planAfterText(Json record, {bool desktopPermissions = false}) {
   final ret = planReturnOf(record);
-  final mode = permissionLabel(approvedOnPhone(ret));
-  return ret == 'full'
+  final mode = permissionLabel(desktopPermissions ? ret : approvedOnPhone(ret));
+  return ret == 'full' && !desktopPermissions
       ? L(
           '批准后按「$mode」去做（电脑上是完全放行，手机上批准回到自动改文件）',
           'After approval it continues with “$mode” (full access on the computer; approving on the phone returns to auto-edit)',
@@ -121,7 +121,11 @@ const _rank = {'plan': 0, 'ask': 1, 'edits': 2, 'auto': 3, 'full': 4};
 bool widens(String? from, String to) =>
     (_rank[to] ?? 0) > (_rank[from ?? 'ask'] ?? 1);
 
-List<ModeOption> permissionOptions(String engine, String? current) {
+List<ModeOption> permissionOptions(
+  String engine,
+  String? current, {
+  bool desktopPermissions = false,
+}) {
   final caps = engines[engine]?.permissionModes ?? _phoneModes;
   final labels = _permission();
   final hints = {
@@ -135,10 +139,13 @@ List<ModeOption> permissionOptions(String engine, String? current) {
     ),
   };
   final out = [
-    for (final m in _phoneModes)
+    for (final m
+        in (desktopPermissions
+            ? ['ask', 'edits', 'auto', 'full']
+            : _phoneModes))
       if (caps.contains(m)) ModeOption(m, labels[m]!, hint: hints[m]),
   ];
-  if (current == 'full' || current == 'auto') {
+  if (!desktopPermissions && (current == 'full' || current == 'auto')) {
     out.add(
       ModeOption(
         current!,
@@ -320,3 +327,12 @@ String contextLabel(({double percent, num used, num window}) u) {
   final used = contextNumber(u.used), window = contextNumber(u.window);
   return L('上下文 $p%：已用 $used / $window', 'Context $p%: $used / $window used');
 }
+
+String permissionConfirm(String to) => to == 'full'
+    ? L(
+        '开启完全放行，跳过命令和文件操作审批？',
+        'Enable full access without command or file approvals?',
+      )
+    : to == 'auto'
+    ? L('允许电脑的审核模型审批操作？', 'Let the computer’s review model approve operations?')
+    : widenConfirm();

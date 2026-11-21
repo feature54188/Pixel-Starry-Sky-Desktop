@@ -5,10 +5,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fingerprint, fromBase64Url, generateKeypair, keypairFrom, toBase64Url, type Keypair } from '@pixelsky/link'
+import { ENGINE_ORDER } from '@pixelsky/protocol'
 import { SecureStore, type Cipher } from '../core/secure-store'
-import type { MobileAccess, MobilePrefs } from '../../shared/types/mobile'
+import type { MobileAccess, MobilePrefs, MobileSessionChoices } from '../../shared/types/mobile'
 
 export interface StoredDevice {
+  desktopPermissions?: boolean
   id: string
   name: string
   /** 手机长期公钥（base64url） */
@@ -25,6 +27,7 @@ interface StoreFile {
   account?: string | null
   prefs: MobilePrefs
   devices: StoredDevice[]
+  sessionChoices?: MobileSessionChoices
 }
 
 /**
@@ -34,6 +37,24 @@ interface StoreFile {
 export const MAX_DEVICES = 5
 
 const isAccess = (v: unknown): v is MobileAccess => v === 'view' || v === 'act'
+
+/** The renderer sends identifiers only. Rebuild the snapshot before writing the plaintext file. */
+function readSessionChoices(raw: unknown): MobileSessionChoices | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const choices = {} as MobileSessionChoices
+  for (const engine of ENGINE_ORDER) {
+    const choice = (raw as Record<string, unknown>)[engine]
+    if (!choice || typeof choice !== 'object') return undefined
+    const { kind, model, id, groupId } = choice as Record<string, unknown>
+    if (model !== null && typeof model !== 'string') return undefined
+    if (kind === 'self') choices[engine] = { kind, model }
+    else if (kind === 'provider' && (id === null || typeof id === 'string')) choices[engine] = { kind, id, model }
+    else if (kind === 'platform' && (groupId === null || typeof groupId === 'string'))
+      choices[engine] = { kind, groupId, model }
+    else return undefined
+  }
+  return choices
+}
 
 function readDevices(raw: unknown): StoredDevice[] {
   if (!Array.isArray(raw)) return []
@@ -52,6 +73,7 @@ function readDevices(raw: unknown): StoredDevice[] {
 }
 
 export class MobileStore {
+  sessionChoices?: MobileSessionChoices
   desktopId: string
   account: string | null
   prefs: MobilePrefs
@@ -76,6 +98,7 @@ export class MobileStore {
     const p = (saved.prefs ?? {}) as Partial<MobilePrefs>
     this.desktopId = typeof saved.desktopId === 'string' && saved.desktopId ? saved.desktopId : randomUUID()
     this.account = typeof saved.account === 'string' ? saved.account : null
+    this.sessionChoices = readSessionChoices(saved.sessionChoices)
     this.prefs = {
       enabled: typeof p.enabled === 'boolean' ? p.enabled : defaults.enabled,
       relay: typeof p.relay === 'string' && p.relay ? p.relay : defaults.relay,
@@ -164,10 +187,11 @@ export class MobileStore {
     return true
   }
 
-  setAccess(id: string, access: unknown): StoredDevice {
+  setAccess(id: string, access: unknown, desktopPermissions = false): StoredDevice {
     const device = this.device(id)
     if (!device || !isAccess(access)) throw new Error('MOBILE_NO_DEVICE')
     device.access = access
+    device.desktopPermissions = access === 'act' && desktopPermissions === true
     this.save()
     return device
   }
@@ -187,6 +211,7 @@ export class MobileStore {
       account: this.account,
       prefs: this.prefs,
       devices: this.devices,
+      sessionChoices: this.sessionChoices,
     }
     const temp = this.file + '.tmp'
     writeFileSync(temp, JSON.stringify(data, null, 2), { mode: 0o600 })
@@ -195,6 +220,20 @@ export class MobileStore {
     } catch (err) {
       rmSync(temp, { force: true })
       throw err
+    }
+  }
+
+  setSessionChoices(input: unknown): void {
+    const choices = readSessionChoices(input)
+    if (!choices) throw new Error('MOBILE_BAD_ARGUMENT')
+    if (JSON.stringify(choices) === JSON.stringify(this.sessionChoices)) return
+    const previous = this.sessionChoices
+    this.sessionChoices = choices
+    try {
+      this.save()
+    } catch (error) {
+      this.sessionChoices = previous
+      throw error
     }
   }
 }

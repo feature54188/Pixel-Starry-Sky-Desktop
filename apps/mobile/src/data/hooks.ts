@@ -9,6 +9,7 @@ import type {
   ImageAttachment,
   Item,
   ProjectRecord,
+  PhoneSources,
   SearchResult,
   SessionSummary,
 } from '@pixelsky/protocol'
@@ -235,8 +236,32 @@ export interface Catalog {
   unsupported: boolean
 }
 
+export function useSources(deviceId: string, engine: EngineId, enabled = true, newSession = false) {
+  const state = useLinkState(deviceId)
+  const link = connections.link(deviceId)
+  const [result, setResult] = useState<{ data: PhoneSources | null; error: string | null }>({ data: null, error: null })
+  useEffect(() => {
+    let alive = true
+    setResult({ data: null, error: null })
+    if (!enabled || !link || state !== 'ready') return
+    link.call<PhoneSources>('sources', engine, newSession ? 'newSession' : 'composer').then(
+      data => alive && setResult({ data, error: null }),
+      (e: Error) => alive && setResult({ data: null, error: e.message === 'MOBILE_UNSUPPORTED' ? null : e.message }),
+    )
+    return () => {
+      alive = false
+    }
+  }, [enabled, engine, link, state, newSession])
+  return result
+}
+
 /** 引擎报上来的模型目录（改模式面板用）；同一台电脑、同一个引擎只取一次 */
-export function useCatalog(deviceId: string | undefined, engine: EngineId, enabled = true): Catalog {
+export function useCatalog(
+  deviceId: string | undefined,
+  engine: EngineId,
+  enabled = true,
+  newSession = false,
+): Catalog {
   const state = useLinkState(deviceId)
   const link = deviceId ? connections.link(deviceId) : undefined
   const [catalog, setCatalog] = useState<Catalog>({ models: null, unsupported: false })
@@ -244,7 +269,7 @@ export function useCatalog(deviceId: string | undefined, engine: EngineId, enabl
     if (!enabled || state !== 'ready' || !link) return
     let alive = true
     setCatalog({ models: null, unsupported: false })
-    link.call<EngineCatalog>('engine:catalog', engine).then(
+    link.call<EngineCatalog>('engine:catalog', engine, ...(newSession ? ['newSession'] : [])).then(
       r => alive && setCatalog({ models: r?.models ?? [], unsupported: false }),
       // 只有旧版电脑（不认这个通道）算「不支持」；别的错（引擎没装、超时）当作没有目录
       (e: Error) => alive && setCatalog({ models: [], unsupported: e.message === 'MOBILE_UNSUPPORTED' }),
@@ -252,6 +277,51 @@ export function useCatalog(deviceId: string | undefined, engine: EngineId, enabl
     return () => {
       alive = false
     }
-  }, [enabled, state, link, engine])
+  }, [enabled, state, link, engine, newSession])
   return catalog
+}
+
+export function usePhoneOption<T>(deviceId: string, method: string, args: unknown[], enabled: boolean) {
+  const link = connections.link(deviceId)
+  const key = JSON.stringify(args)
+  const [result, setResult] = useState<{ key: string; value: T } | null>(null)
+  useEffect(() => {
+    let current = true
+    setResult(null)
+    if (enabled && link)
+      void link
+        .call<T>(method, ...JSON.parse(key))
+        .then(value => {
+          if (current) setResult({ key, value })
+        })
+        .catch(() => undefined)
+    return () => {
+      current = false
+    }
+  }, [link, method, key, enabled])
+  return result?.key === key && enabled ? result.value : null
+}
+
+type PanelSettings = { effort: import('@pixelsky/protocol').Effort | null; fast: boolean; thinkingSummaries: boolean }
+export function usePanelDefaults(deviceId: string, engine: EngineId, enabled: boolean, panel: Partial<PanelSettings>) {
+  const [saved, setSaved] = useState<{ engine: EngineId; value: PanelSettings } | null>(null)
+  const [error, setError] = useState('')
+  const loaded = usePhoneOption<PanelSettings>(deviceId, 'effortDefaults', [engine], enabled)
+  useEffect(() => {
+    setSaved(null)
+    setError('')
+  }, [enabled, deviceId, engine])
+  const defaults = enabled ? (saved?.engine === engine ? saved.value : loaded) : null
+  const changed =
+    defaults && Object.entries(panel).some(([key, v]) => v !== undefined && v !== defaults[key as keyof PanelSettings])
+  const save = async () => {
+    try {
+      const result = await connections.link(deviceId)?.call<PanelSettings>('effortDefaults', engine, panel)
+      if (result) setSaved({ engine, value: result })
+      setError('')
+    } catch (e) {
+      setError((e as Error).message)
+    }
+  }
+  return { defaults, changed, save, error }
 }

@@ -284,8 +284,39 @@ export class DemoLink {
         return reply(projects)
       case 'engine:openSessionTail':
         return reply(tail(String(args[0])))
+      case 'modelChoices': {
+        const engine = String(args[0]),
+          kind = args[1]
+        if (engine !== 'codex' && engine !== 'claude') return reply([])
+        return reply([
+          {
+            engine,
+            model: engine === 'codex' ? 'gpt-6.2-astra' : 'claude-sonnet-4-5',
+            source:
+              kind === 'platform' ? { kind, groupId: 'route' } : kind === 'provider' ? { kind, id: 'api' } : { kind },
+            name: '标准线路',
+            rate: 1,
+            billing: 'balance_only',
+          },
+        ])
+      }
+      case 'effortDefaults':
+        return reply({ effort: 'xhigh', fast: false, thinkingSummaries: true, ...((args[1] as object) ?? {}) })
+      case 'speedOption':
+        return reply({ allowed: args[0] === 'codex', multiplier: 3 })
+      case 'projectTools:sessionChecks':
+        return reply(false)
       case 'defaults':
         return reply({ engine: 'claude' })
+      case 'sources':
+        return reply({
+          canPickSource: true,
+          composer: true,
+          desktopPermissions: true,
+          platformError: null,
+          platform: [{ id: 'route', name: '标准线路', rate: 1, models: ['claude-sonnet-4-5'] }],
+          providers: [{ id: 'api', name: '本机接口', models: ['demo-model', 'demo-model-fast'] }],
+        })
       case 'account':
         return reply({ name: '林夏', balance: 96.25, currency: 'USD', plan: null, updatedAt: now })
       case 'search':

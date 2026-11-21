@@ -38,6 +38,7 @@ import { startWindowActivity } from '../features/layout/windowActivity'
 import { startAutoSave } from '../features/editor/autoSave'
 import { startLoopClock } from '../features/layout/loopClock'
 import { startPerfTier } from '../features/layout/perfTier'
+import { startMobileSessionChoices } from '../features/account/platform'
 
 document.documentElement.dataset.platform = window.pixelsky?.platform ?? 'web'
 // 页面报错、未处理的 Promise 拒绝写进本机日志（docs/ui/logging.md §4.5）
@@ -58,6 +59,7 @@ startPerfTier()
 startGlass()
 // 记最近一次点击、按键：切换对话慢时记日志用（docs/ui/performance.md §5.2 B1）
 installInputClock()
+startMobileSessionChoices()
 
 createRoot(document.getElementById('root')!, reactRootErrorOptions).render(
   <StrictMode>
