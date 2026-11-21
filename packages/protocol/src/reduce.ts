@@ -142,8 +142,11 @@ export function reduce(s: SessionSnapshot, e: EngineEvent): SessionSnapshot {
       items[i] = next
       return { ...s, items }
     }
-    case 'approval_request':
-      return { ...s, pending: [...s.pending.filter(p => p.requestId !== e.request.requestId), e.request] }
+    case 'approval_request': {
+      const pending = [...s.pending.filter(p => p.requestId !== e.request.requestId), e.request]
+      // 等待批准的操作优先于引擎可以继续运行的提问，同类请求按到达顺序。
+      return { ...s, pending: pending.sort((a, b) => Number(a.isBlocking === false) - Number(b.isBlocking === false)) }
+    }
     case 'approval_resolved':
       return { ...s, pending: s.pending.filter(p => p.requestId !== e.requestId) }
     case 'usage':

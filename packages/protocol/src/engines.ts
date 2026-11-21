@@ -110,7 +110,7 @@ export const ENGINES: Record<EngineId, EngineDescriptor> = {
       // 模型 / 强度走 RPC set_model / set_thinking_level，权限模式走批准扩展的 /pixelsky-mode 命令，都是运行中实时生效
       liveModelSwitch: true,
       livePermissionSwitch: true,
-      permissionModes: ['ask', 'edits', 'plan', 'full'],
+      permissionModes: ['ask', 'edits', 'auto', 'plan', 'full'],
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       ultracode: false,
       fast: true,
@@ -154,7 +154,7 @@ export const ENGINES: Record<EngineId, EngineDescriptor> = {
       liveModelSwitch: true,
       livePermissionSwitch: true,
       // default / accept-edits / plan；完全放行是 agy 的 accept-edits 加我们替它回允许（不换进程，antigravity/session.ts）
-      permissionModes: ['ask', 'edits', 'plan', 'full'],
+      permissionModes: ['ask', 'edits', 'auto', 'plan', 'full'],
       // 实际档位跟着模型变（3.1-pro 只有 low / high），P2 按会话选项给
       efforts: ['low', 'medium', 'high'],
       ultracode: false,

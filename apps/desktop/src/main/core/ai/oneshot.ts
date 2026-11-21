@@ -2,7 +2,7 @@
 // 只管请求体和读回复：Anthropic Messages、OpenAI Responses 两种格式；地址、认证头由调用方给（云端和自定义 API 不同）
 import type { AiUsage } from '../../../shared/types/ai'
 
-export type OneShotProtocol = 'anthropic' | 'responses' | 'chat'
+export type OneShotProtocol = 'anthropic' | 'responses' | 'chat' | 'gemini'
 
 export interface OneShotRequest {
   protocol: OneShotProtocol
@@ -20,6 +20,12 @@ export interface OneShotReply {
 }
 
 export function oneShotBody(r: OneShotRequest): Record<string, unknown> {
+  if (r.protocol === 'gemini')
+    return {
+      systemInstruction: { parts: [{ text: r.system }] },
+      contents: [{ role: 'user', parts: [{ text: r.prompt }] }],
+      generationConfig: { maxOutputTokens: r.maxTokens },
+    }
   if (r.protocol === 'chat')
     return {
       model: r.model,
@@ -43,6 +49,18 @@ const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
 /** 读回复：文字拼起来，用量换成统一的四项；格式不对时文字为空 */
 export function parseReply(protocol: OneShotProtocol, body: unknown): OneShotReply {
   const json = record(body)
+  if (protocol === 'gemini') {
+    const candidate = record(list(json.candidates)[0])
+    const parts = list(record(candidate.content).parts).map(record)
+    return {
+      text: parts
+        .filter(p => !p.thought && typeof p.text === 'string')
+        .map(p => p.text)
+        .join(''),
+      truncated: candidate.finishReason !== 'STOP',
+      usage: null,
+    }
+  }
   const u = record(json.usage)
   if (protocol === 'anthropic') {
     const text = list(json.content)

@@ -1,6 +1,8 @@
 // 审批 / 提问卡片：顶替输入框位置的浮动圆角卡片，大圆按钮（规则照网页版 ApprovalCard.tsx）。
 // 「总是允许」在手机上多问一次；提问：推荐项、「都按推荐」、自己填答案、密码类的题用密码框；
-// 要填表单的请求手机上只能拒绝或回电脑处理。没送到电脑时卡片还在，写明没处理成。
+// MCP 表单提交 JSON 对象。没送到电脑时卡片还在，写明没处理成。
+import 'dart:convert';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../../data/actions.dart';
@@ -81,6 +83,8 @@ class _ApprovalCardState extends State<ApprovalCard> {
   bool _confirmAlways = false;
   String? _error;
   final Map<String, QuestionDraft> _drafts = {};
+  String _formText = '';
+  Json? _formContent;
 
   Future<void> _answer(Json d) async {
     setState(() {
@@ -163,11 +167,47 @@ class _ApprovalCardState extends State<ApprovalCard> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Note(
-              L(
-                '这个请求要填一张表单，手机上还填不了，请到电脑上处理；也可以在这里拒绝。',
-                "This request needs a form that can't be filled in on the phone yet. Handle it on the computer, or deny it here.",
+            Material(
+              type: MaterialType.transparency,
+              child: ExpansionTile(
+                title: Text(L('查看表单字段', 'View form fields')),
+                children: [
+                  SelectableText(
+                    const JsonEncoder.withIndent('  ')
+                        .convert(r.json['formSchema']),
+                  ),
+                ],
               ),
+            ),
+            TextFormField(
+              enabled: !off,
+              minLines: 2,
+              maxLines: 6,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: InputDecoration(
+                labelText: L('表单回答（JSON 对象）', 'Form response (JSON object)'),
+                hintText: '{"name":"…"}',
+                errorText: _formText.trim().isNotEmpty && _formContent == null
+                    ? L('请输入有效的 JSON 对象', 'Enter a valid JSON object')
+                    : null,
+              ),
+              onChanged: (v) => setState(() {
+                _formText = v;
+                try {
+                  _formContent = objOrNull(jsonDecode(v));
+                } on FormatException {
+                  _formContent = null;
+                }
+              }),
+            ),
+            const SizedBox(height: 8),
+            _Pill(
+              label: L('提交回答', 'Submit answers'),
+              primary: true,
+              onTap: off || !r.canAllow || _formContent == null
+                  ? null
+                  : () => _answer({'type': 'form', 'content': _formContent}),
             ),
             if (r.canDeny) ...[
               const SizedBox(height: 8),
@@ -421,11 +461,12 @@ class _ApprovalCardState extends State<ApprovalCard> {
                   if (r.kind == 'question')
                     for (final q in questions)
                       _QuestionField(
+                        key: ValueKey(q.answerKey),
                         question: q,
-                        draft: _drafts[q.question] ?? emptyDraft,
+                        draft: _drafts[q.answerKey] ?? emptyDraft,
                         disabled: off,
                         onChange: (d) =>
-                            setState(() => _drafts[q.question] = d),
+                            setState(() => _drafts[q.answerKey] = d),
                       ),
                   const SizedBox(height: 14),
                   buttons(),
@@ -552,6 +593,7 @@ class _Pill extends StatelessWidget {
 /// 一道题：选项（推荐的带标签）、「其他」自己填；没有选项的题直接填
 class _QuestionField extends StatelessWidget {
   const _QuestionField({
+    super.key,
     required this.question,
     required this.draft,
     required this.disabled,
@@ -655,6 +697,11 @@ class _QuestionField extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (q.header.isNotEmpty && q.header != q.question)
+            Text(
+              q.header,
+              style: TextStyle(fontSize: Fs.meta, color: c.textMuted),
+            ),
           Text(
             q.question,
             style: TextStyle(

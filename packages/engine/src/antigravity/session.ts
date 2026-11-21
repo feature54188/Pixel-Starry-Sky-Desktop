@@ -16,6 +16,7 @@ import type {
 } from '@pixelsky/protocol'
 import type { CloseOptions, EngineSession, Launcher, SessionContext } from '../adapter'
 import { ACP_AUTH_REQUIRED, AcpConnection } from '../acp/connection'
+import { reviewOrAsk } from '../approval-review'
 import { forgetKeyAuth, keyAuthCameBack } from './auth-state'
 import { AgyBackgroundTracker, defaultAgyProcessOps, type AgyProcessOps } from './background'
 import { AGY_ERROR_PREFIX, AgyTranslator, agyTurnUsage, type AgyQuestion } from './translate'
@@ -45,6 +46,7 @@ export function configOptions(v: unknown): ConfigOption[] {
 /** 我们的权限模式 ↔ agy 的模式（§7：default 要审批、accept-edits 改文件不问、plan） */
 const MODE_OUT: Partial<Record<PermissionMode, string>> = {
   ask: 'default',
+  auto: 'default',
   edits: 'accept-edits',
   plan: 'plan',
   // 完全放行：agy 少问一些，剩下的权限请求由会话直接回允许
@@ -290,9 +292,8 @@ export class AntigravitySession implements EngineSession {
     if (r.backgroundKilled) this.bg.killedByModel(r.backgroundKilled)
     if (r.mode) {
       const mode = MODE_IN[r.mode]
-      // 完全放行在 agy 那边就是 accept-edits，它报回来时别把我们的改回「自动编辑」
-      const same = mode === 'edits' && this.settings.permissionMode === 'full'
-      if (mode && !same && mode !== this.settings.permissionMode) {
+      // default / accept-edits 各有两个宿主模式。回报同一 CLI 模式时保留宿主的选择。
+      if (mode && MODE_OUT[this.settings.permissionMode] !== r.mode) {
         this.settings = { ...this.settings, permissionMode: mode }
         this.ctx.setPermissionMode(mode)
       }
@@ -361,8 +362,17 @@ export class AntigravitySession implements EngineSession {
     if (allowOnce && (full || (keys.length && keys.every(k => this.allowedForSession.has(k)))))
       return Promise.resolve({ outcome: { outcome: 'selected', optionId: allowOnce.optionId } })
     return new Promise(resolve => {
-      this.approvals.set(requestId, { options, keys, resolve: outcome => resolve({ outcome }) })
-      this.ctx.emit({ type: 'approval_request', request })
+      const pending: PendingApproval = { options, keys, resolve: outcome => resolve({ outcome }) }
+      this.approvals.set(requestId, pending)
+      // 自动审核只决定本次操作。没有单次选项时把 ACP 提供的选项交给用户。
+      if (allowOnce && options.some(o => o.kind === 'reject_once')) {
+        reviewOrAsk(
+          this.ctx,
+          request,
+          () => this.approvals.get(requestId) === pending,
+          type => this.answer(requestId, { type }),
+        )
+      } else this.ctx.emit({ type: 'approval_request', request })
     })
   }
 

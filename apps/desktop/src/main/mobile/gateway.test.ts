@@ -1144,6 +1144,23 @@ describe('MobileGateway calls', () => {
     await expect(p.call('image', 's1', 'u1', 1)).rejects.toThrow('MOBILE_TOO_LARGE')
   })
 
+  it('forwards phone answers and MCP form content to the host with the request ID', async () => {
+    const t = setup()
+    gateways.push(t.gateway)
+    const p = await paired(t)
+    const answers = { type: 'answer', answers: { environment: '开发', name: '小程序' } }
+    const form = { type: 'form', content: { project: '移动端', count: 2 } }
+    await p.call('engine:answer', 's1', 'ask', answers)
+    await p.call('engine:answer', 's1', 'form', form)
+    expect(t.calls.slice(-2)).toEqual([
+      ['engine:answer', ['s1', 'ask', answers, 'mobile'], 'mobile:p1'],
+      ['engine:answer', ['s1', 'form', form, 'mobile'], 'mobile:p1'],
+    ])
+    t.devices[0].access = 'view'
+    await expect(p.call('engine:answer', 's1', 'ask', answers)).rejects.toThrow('MOBILE_FORBIDDEN')
+    await expect(p.call('engine:answer', 's1', 'form', form)).rejects.toThrow('MOBILE_FORBIDDEN')
+  })
+
   it('lets a view-only phone read but not act, and cuts off a revoked phone', async () => {
     const t = setup()
     gateways.push(t.gateway)

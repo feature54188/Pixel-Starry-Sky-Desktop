@@ -43,6 +43,7 @@ import {
   seedTranscript,
 } from './transcript'
 import { ClaudeTranslator } from './translate'
+import { reviewOrAsk } from '../approval-review'
 
 /** 两个目录是不是同一个（Windows 不分大小写） */
 const samePath = (a: string, b: string): boolean =>
@@ -883,21 +884,12 @@ export class ClaudeSession implements EngineSession {
       const pending = { toolName, input, toolUseId, suggestions }
       this.approvals.set(req.requestId, pending)
       const approval = approvalFor(req.requestId, toolName, input, toolUseId, this.ctx.record().cwd)
-      const review = this.ctx.reviewApproval
-      if (
-        review &&
-        this.ctx.record().permissionMode === 'auto' &&
-        approval.kind !== 'plan' &&
-        approval.kind !== 'question'
-      ) {
-        void review(approval)
-          .catch(() => null)
-          .then(decision => {
-            if (this.approvals.get(req.requestId) !== pending) return
-            if (decision && this.ctx.record().permissionMode === 'auto') this.answer(req.requestId, { type: decision })
-            else this.ctx.emit({ type: 'approval_request', request: approval })
-          })
-      } else this.ctx.emit({ type: 'approval_request', request: approval })
+      reviewOrAsk(
+        this.ctx,
+        approval,
+        () => this.approvals.get(req.requestId) === pending,
+        type => this.answer(req.requestId, { type }),
+      )
       return
     }
     // 其他请求（MCP 表单、对话框等）v1 不支持，回错误，免得 CLI 一直等

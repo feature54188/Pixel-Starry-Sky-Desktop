@@ -1151,6 +1151,26 @@ describe('Codex app-server adapter', () => {
     expect(start()[1].params.collaborationMode).toMatchObject({ mode: 'default', settings: { model: 'fake-codex' } })
     expect(start()[2].params.collaborationMode).toBeUndefined()
   })
+  it('异步提问保留运行状态，同题面的选择和自由输入按各自 ID 回复', async () => {
+    const { session, messages } = setup()
+    await host!.send(session.id, '异步提问 同题面')
+    await wait(() => host!.open(session.id).pending.length === 1)
+    const snap = host!.open(session.id)
+    expect(snap.state).toBe('running')
+    expect(snap.pending[0]).toMatchObject({
+      isBlocking: false,
+      questions: [
+        { answerKey: 'environment', question: '你的选择？' },
+        { answerKey: 'name', question: '你的选择？', options: [] },
+      ],
+    })
+    host!.answer(session.id, 'ask', { type: 'answer', answers: { environment: '开发', name: '小程序' } })
+    await wait(() => host!.open(session.id).state === 'idle')
+    expect(messages().find(m => m.id === 'ask' && m.result)?.result).toEqual({
+      answers: { environment: { answers: ['开发'] }, name: { answers: ['小程序'] } },
+    })
+  })
+
   it('允许提问时打开 Default 模式提问：启动带开关，第一轮带一次 default 拿提问指令，非计划模式也弹问题卡', async () => {
     const { session, messages, launches } = setup()
     await host!.send(session.id, '提问')

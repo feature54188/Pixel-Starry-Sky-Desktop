@@ -20,6 +20,21 @@ const q = (question: string, labels: string[], multiSelect = false) => ({
 })
 
 describe('提问卡片的推荐项', () => {
+  it('同题面的推荐答案和手动答案按各自的 ID 提交', () => {
+    const first = { ...q('请选择', ['开发（推荐）']), answerKey: 'constructor' }
+    const second = { ...q('请选择', ['测试（推荐）']), answerKey: 'stage' }
+    const questions = [first, second]
+    const expected = { constructor: '开发（推荐）', stage: '测试（推荐）' }
+    expect(recommendedAnswers(questions)).toEqual(expected)
+    expect(collectAnswers(questions, {})).toBeNull()
+    expect(
+      collectAnswers(questions, {
+        constructor: pickOption(first, EMPTY_DRAFT, '开发（推荐）'),
+        stage: pickOption(second, EMPTY_DRAFT, '测试（推荐）'),
+      }),
+    ).toEqual(expected)
+  })
+
   it('认中英文和全角半角括号，显示时去掉记号', () => {
     expect(isRecommended('7 天（推荐）')).toBe(true)
     expect(isRecommended('Keep it (Recommended)')).toBe(true)

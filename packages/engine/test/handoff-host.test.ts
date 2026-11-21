@@ -213,7 +213,7 @@ function setup(options: Partial<EngineHostOptions> = {}, seeds = false) {
     codex = new FakeAdapter('codex', true, seeds)
   const host = new EngineHost({
     dataDir: join(root, 'data'),
-    adapters: { claude, codex, pixel: new FakeAdapter('pixel') },
+    adapters: { claude, codex, pixel: new FakeAdapter('pixel'), dot: new FakeAdapter('dot') },
     emit: () => {},
     ...options,
   })
@@ -241,7 +241,7 @@ describe('跨引擎接力：换引擎', () => {
     expect(snap().record.engineSessions).toBeUndefined()
   })
 
-  it('Codex 换到 Claude 保留自动审核，换到 Pixel 则退回每次询问（开始过的、没开始过的都一样）', async () => {
+  it('Codex 换到 Claude、Pixel 保留自动审核，换到 Dot 则退回每次询问', async () => {
     const started = setup()
     await started.host.update(started.record.id, { engine: 'codex' })
     await started.host.update(started.record.id, { permissionMode: 'auto' })
@@ -249,7 +249,9 @@ describe('跨引擎接力：换引擎', () => {
     await started.host.update(started.record.id, { engine: 'claude' })
     expect(started.snap().record).toMatchObject({ engine: 'claude', permissionMode: 'auto' })
     await started.host.update(started.record.id, { engine: 'pixel' })
-    expect(started.snap().record).toMatchObject({ engine: 'pixel', permissionMode: 'ask' })
+    expect(started.snap().record).toMatchObject({ engine: 'pixel', permissionMode: 'auto' })
+    await started.host.update(started.record.id, { engine: 'dot' })
+    expect(started.snap().record).toMatchObject({ engine: 'dot', permissionMode: 'ask' })
 
     const fresh = setup()
     await fresh.host.update(fresh.record.id, { engine: 'codex' })
@@ -257,7 +259,9 @@ describe('跨引擎接力：换引擎', () => {
     await fresh.host.update(fresh.record.id, { engine: 'claude' })
     expect(fresh.snap().record).toMatchObject({ engine: 'claude', permissionMode: 'auto' })
     await fresh.host.update(fresh.record.id, { engine: 'pixel' })
-    expect(fresh.snap().record).toMatchObject({ engine: 'pixel', permissionMode: 'ask' })
+    expect(fresh.snap().record).toMatchObject({ engine: 'pixel', permissionMode: 'auto' })
+    await fresh.host.update(fresh.record.id, { engine: 'dot' })
+    expect(fresh.snap().record).toMatchObject({ engine: 'dot', permissionMode: 'ask' })
   })
 
   it('开始过的空闲会话可以换引擎：关进程、存旧引擎的会话 id、给新引擎新会话', async () => {

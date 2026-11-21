@@ -5,6 +5,10 @@ import '../protocol/json.dart';
 /// 提问（packages/protocol 的 Question）
 extension type Question(Json json) implements Json {
   String get question => str(json['question']) ?? '';
+  String get answerKey => str(json['answerKey'])?.isNotEmpty == true
+      ? json['answerKey'] as String
+      : question;
+  String get header => str(json['header']) ?? '';
   bool get multiSelect => json['multiSelect'] == true;
   bool get allowOther => json['allowOther'] == true;
   bool get secret => json['secret'] == true;
@@ -37,7 +41,7 @@ Map<String, String>? recommendedAnswers(List<Question> questions) {
         if (isRecommended(o.label)) o.label,
     ];
     if (picks.isEmpty) return null;
-    answers[q.question] = (q.multiSelect ? picks : picks.take(1)).join(', ');
+    answers[q.answerKey] = (q.multiSelect ? picks : picks.take(1)).join(', ');
   }
   return answers;
 }
@@ -101,9 +105,9 @@ Map<String, String>? collectAnswers(
 ) {
   final answers = <String, String>{};
   for (final q in questions) {
-    final value = draftAnswer(q, drafts[q.question] ?? emptyDraft);
+    final value = draftAnswer(q, drafts[q.answerKey] ?? emptyDraft);
     if (value == null) return null;
-    answers[q.question] = value;
+    answers[q.answerKey] = value;
   }
   return answers;
 }

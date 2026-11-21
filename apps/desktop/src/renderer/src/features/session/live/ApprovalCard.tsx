@@ -1,6 +1,6 @@
 import { useI18n } from '@/i18n/I18nProvider'
 import {
-  EMPTY_DRAFT,
+  getDraft,
   answeredCount,
   canWriteIn,
   collectAnswers,
@@ -321,9 +321,9 @@ export function ApprovalCard({
     : undefined
 
   const questions = request.questions ?? []
-  const draft = (q: Question): QuestionDraft => drafts[q.question] ?? EMPTY_DRAFT
+  const draft = (q: Question): QuestionDraft => getDraft(q, drafts)
   const update = (q: Question, next: (d: QuestionDraft) => QuestionDraft): void =>
-    setDrafts(prev => ({ ...prev, [q.question]: next(prev[q.question] ?? EMPTY_DRAFT) }))
+    setDrafts(prev => ({ ...prev, [q.answerKey || q.question]: next(getDraft(q, prev)) }))
   const answers = collectAnswers(questions, drafts)
   const recommended = request.kind === 'question' ? recommendedAnswers(questions) : null
   const canAllow = request.canAllow !== false && (request.formSchema === undefined || !!formContent)
@@ -540,7 +540,7 @@ export function ApprovalCard({
         {request.kind === 'question' && (
           <div className={cn(BODY, 'flex flex-col gap-3')}>
             {questions.map((q, qi) => (
-              <div key={q.question} data-question-index={qi}>
+              <div key={q.answerKey || q.question} data-question-index={qi}>
                 <div className="mb-1.5 text-list text-fg">
                   {q.header && (
                     <span className="mr-1.5 rounded-sm bg-subtle px-1.5 py-0.5 text-label text-fg-muted">

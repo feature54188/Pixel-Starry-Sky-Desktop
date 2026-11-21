@@ -316,10 +316,12 @@ export class HostEvents {
         this.apply(id, { type: 'status', state: 'running' })
         break
       case 'approval_request':
-        this.apply(id, { type: 'status', state: 'waiting' })
+        if (event.request.isBlocking !== false) this.apply(id, { type: 'status', state: 'waiting' })
+        else this.broadcastSessions()
         break
       case 'approval_resolved':
-        if (rt.snapshot.turnId && rt.snapshot.pending.length === 0) this.apply(id, { type: 'status', state: 'running' })
+        if (rt.snapshot.turnId && !rt.snapshot.pending.some(p => p.isBlocking !== false))
+          this.apply(id, { type: 'status', state: 'running' })
         // 状态没变时也要广播：会话列表里的 pending 是第一个待批准的，处理掉一个就换成下一个
         else this.broadcastSessions()
         break

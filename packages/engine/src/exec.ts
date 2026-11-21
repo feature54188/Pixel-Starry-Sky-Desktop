@@ -235,11 +235,11 @@ export function run(
   args: string[],
   env: NodeJS.ProcessEnv,
   timeoutMs = 20_000,
-  opts?: { cwd?: string; signal?: AbortSignal },
+  opts?: { cwd?: string; signal?: AbortSignal; input?: string },
 ): Promise<ExecResult> {
   return new Promise(resolve => {
     try {
-      execFile(
+      const child = execFile(
         launcher.command,
         [...launcher.args, ...args],
         {
@@ -269,6 +269,10 @@ export function run(
           })
         },
       )
+      if (opts?.input !== undefined) {
+        child.stdin?.on('error', () => undefined) // 进程提前退出时由 execFile 回报错误
+        child.stdin?.end(opts.input)
+      }
     } catch (err) {
       // 不是合法程序的文件（例如 Windows 上的 EFTYPE）会同步抛出，而不是走回调
       resolve({ ok: false, started: false, stdout: '', stderr: '', error: (err as Error).message })

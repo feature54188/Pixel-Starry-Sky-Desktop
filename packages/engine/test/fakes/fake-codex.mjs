@@ -826,18 +826,33 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             threadId: thread,
             turnId: id,
             itemId: 'ask-1',
-            questions: [
-              {
-                id: 'scope',
-                header: '范围',
-                question: '先做哪一批？',
-                isOther: true,
-                options: [
-                  { label: '只做收尾（推荐）', description: '行为问题单列' },
-                  { label: '先补测试', description: '确认后修复' },
+            isBlocking: !text.includes('异步提问'),
+            questions: text.includes('同题面')
+              ? [
+                  {
+                    id: 'environment',
+                    header: '环境',
+                    question: '你的选择？',
+                    isOther: true,
+                    options: [
+                      { label: '开发', description: '' },
+                      { label: '生产', description: '' },
+                    ],
+                  },
+                  { id: 'name', header: '名称', question: '你的选择？', options: null },
+                ]
+              : [
+                  {
+                    id: 'scope',
+                    header: '范围',
+                    question: '先做哪一批？',
+                    isOther: true,
+                    options: [
+                      { label: '只做收尾（推荐）', description: '行为问题单列' },
+                      { label: '先补测试', description: '确认后修复' },
+                    ],
+                  },
                 ],
-              },
-            ],
           },
         })
         return

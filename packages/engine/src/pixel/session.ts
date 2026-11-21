@@ -29,6 +29,7 @@ import { QUICK_CLOSE_MS, type CloseOptions, type EngineSession, type Launcher, t
 import type { ChatSeed } from '../chat-log'
 import { McpReporter, pixelMcpServers } from '../mcp'
 import { crashReason } from '../exec'
+import { reviewOrAsk } from '../approval-review'
 import { effortOfLevel, effortsFromLevels, findModel, modelEfforts, piThinkingLevel } from './catalog'
 import { pixelWindow } from './context-window'
 import {
@@ -103,7 +104,7 @@ export const PIXEL_MODES: Record<PermissionMode, string> = {
   edits: 'acceptEdits',
   plan: 'plan',
   full: 'bypassPermissions',
-  // Pixel 没有这一档，换引擎时带过来的按每次询问（放最后：按值反查时先命中 ask）
+  // 宿主处理审核，命令行发正常的工具审批（按值反查时先命中 ask）。
   auto: 'default',
 }
 
@@ -977,8 +978,17 @@ export class PixelSession implements EngineSession {
     const timeout = typeof raw.timeout === 'number' && raw.timeout > 0 ? raw.timeout : 0
     const timer = timeout ? setTimeout(() => this.dropApproval(id), timeout) : null
     timer?.unref()
-    this.approvals.set(id, { request, method: kind, options, timer })
-    this.ctx.emit({ type: 'approval_request', request })
+    const pending = { request, method: kind, options, timer }
+    this.approvals.set(id, pending)
+    // 第三方扩展也能弹普通的 confirm 对话框。只有工具批准扩展的请求交给审核模型。
+    if (approval && toolNameFromTitle(title)) {
+      reviewOrAsk(
+        this.ctx,
+        request,
+        () => this.approvals.get(id) === pending,
+        type => this.answer(id, { type }),
+      )
+    } else this.ctx.emit({ type: 'approval_request', request })
   }
 
   private link(requestId: string, itemId: string): void {
@@ -988,8 +998,9 @@ export class PixelSession implements EngineSession {
 
   /** 命令行自己换了权限模式（计划确认后退出计划模式）：记下来并告诉宿主，不再发 /pixelsky-mode */
   private syncMode(text: string): void {
+    if (text === PIXEL_MODES[this.settings.permissionMode]) return
     const mode = (Object.keys(PIXEL_MODES) as PermissionMode[]).find(m => PIXEL_MODES[m] === text)
-    if (!mode || mode === this.settings.permissionMode) return
+    if (!mode) return
     this.settings.permissionMode = mode
     this.ctx.setPermissionMode(mode)
   }

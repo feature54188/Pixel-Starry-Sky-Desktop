@@ -20,8 +20,8 @@ export const settingsReorgMessages = {
   'settingsEngines.shared': { zh: '所有引擎通用', en: 'All engines' },
   'settingsEngines.autoReviewModel': { zh: '自动审核模型', en: 'Automatic review model' },
   'settingsEngines.autoReviewModelHint': {
-    zh: 'Codex 自动审核、Claude Code 权限审批和应用内代码审查可共用此模型。默认由 Codex 和代码审查使用各自的模型，Claude Code 交由人工审批。',
-    en: 'Codex automatic reviews, Claude Code permission requests, and in-app code reviews can share this model. By default, Codex and code reviews use their own models, and Claude Code prompts for manual approval.',
+    zh: 'Codex、Claude Code、内置 Pi、Antigravity 和应用内代码审查共用此设置。留空时，Claude Code、Pi 和 Antigravity 的工具审批交给你确认。',
+    en: 'Codex, Claude Code, built-in Pi, Antigravity, and in-app code reviews share this setting. Leave it empty to handle tool approvals for Claude Code, Pi, and Antigravity yourself.',
   },
   'settingsEngines.autoReviewModelDefault': { zh: '默认', en: 'Default' },
   'settingsEngines.autoReviewKeywords': {

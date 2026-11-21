@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { afterAll, describe, expect, it } from 'vitest'
+import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { EngineEvent, SessionRecord } from '@pixelsky/protocol'
 import type { SessionContext } from '../src/adapter'
 import type { AgyProcessOps } from '../src/antigravity/background'
@@ -156,7 +156,7 @@ function setup(
       }
       tick()
     })
-  return { session, events, sent, turnDone, rec: () => rec }
+  return { session, ctx, events, sent, turnDone, rec: () => rec }
 }
 
 describe('Antigravity 会话（假 agy）', () => {
@@ -279,6 +279,31 @@ describe('Antigravity 会话（假 agy）', () => {
     expect(t.events.some(e => e.type === 'item_started' && e.item.kind === 'assistant')).toBe(true)
     expect(t.events.some(e => e.type === 'usage' && e.usage.contextTokens === 100)).toBe(true)
     await t.session.close()
+  })
+
+  it('自动审核的放行、拒绝各只选一次，模型无结论转人工', async () => {
+    const t = setup({ permissionMode: 'auto' })
+    t.ctx.reviewApproval = vi.fn().mockResolvedValueOnce('allow').mockResolvedValueOnce('deny').mockResolvedValue(null)
+    try {
+      for (const id of ['t1', 't2']) {
+        t.session.send('tool', id, id)
+        await t.turnDone(id)
+      }
+      expect(
+        t
+          .sent()
+          .filter(m => m.id === 'p1')
+          .map(m => m.result.outcome.optionId),
+      ).toEqual(['allow', 'deny'])
+      expect(t.events.some(e => e.type === 'approval_request')).toBe(false)
+      t.session.send('tool', 't3', 'u3')
+      await vi.waitFor(() => expect(t.events.some(e => e.type === 'approval_request')).toBe(true))
+      const card = t.events.find(e => e.type === 'approval_request')!
+      t.session.answer(card.request.requestId, { type: 'deny' })
+      await t.turnDone('t3')
+    } finally {
+      await t.session.close()
+    }
   })
 
   it('审批：允许后命令跑完；拒绝后工具失败、这一轮结束', async () => {

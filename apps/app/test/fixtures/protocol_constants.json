@@ -126,6 +126,7 @@
     "permissionModes": [
      "ask",
      "edits",
+     "auto",
      "plan",
      "full"
     ],
@@ -169,6 +170,7 @@
     "permissionModes": [
      "ask",
      "edits",
+     "auto",
      "plan",
      "full"
     ],

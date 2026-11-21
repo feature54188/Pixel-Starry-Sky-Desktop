@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EngineHost, PixelAdapter } from '../src'
 import type { EngineInfo, HostEvent } from '@pixelsky/protocol'
 import type { EngineAdapter, EngineSession, SessionContext } from '../src/adapter'
@@ -278,6 +278,38 @@ describe('Pixel 引擎适配器', () => {
     // 不调 set_auto_retry（会写进用户自己的 Pi 设置文件）
     expect(log.some(m => m.type === 'set_auto_retry')).toBe(false)
   })
+  it('Pi 自动审核：工具申请只放行本次，模型拒绝会回给命令行，无结论转人工', async () => {
+    const reviewApproval = vi.fn().mockResolvedValueOnce('allow').mockResolvedValueOnce('deny').mockResolvedValue(null)
+    const { session, messages } = setup(10_000, {}, { reviewApproval })
+    await host!.update(session.id, { permissionMode: 'auto' })
+    for (const expected of [1, 2]) {
+      await host!.send(session.id, '三选一')
+      await wait(() => snap(session.id).items.filter(i => i.kind === 'turn_stats').length === expected)
+    }
+    expect(
+      messages()
+        .filter(m => m.type === 'extension_ui_response')
+        .map(m => m.value),
+    ).toEqual(['允许 / Allow', '拒绝 / Deny'])
+    expect(snap(session.id).record.permissionMode).toBe('auto')
+    await host!.send(session.id, '审批')
+    await wait(() => snap(session.id).pending.length === 1)
+    host!.answer(session.id, snap(session.id).pending[0].requestId, { type: 'deny' })
+    expect(reviewApproval).toHaveBeenCalledTimes(3)
+  })
+
+  it('Pi 本地审核模型从 stdin 收到问题，使用指定模型且不保存会话', async () => {
+    const { adapter, argvs } = setup()
+    const reply = await adapter.oneShot(
+      { prompt: 'Review this operation', model: 'fake/fake-small' },
+      new AbortController().signal,
+    )
+    expect(reply.text).toBe('Review this operation')
+    expect(argvs().at(-1).argv).toEqual(
+      expect.arrayContaining(['-p', '--no-tools', '--no-session', '--no-skills', '--model', 'fake/fake-small']),
+    )
+  })
+
   it('批准：允许和拒绝都往返，拒绝的命令显示已拒绝', async () => {
     const { session, messages } = setup()
     await host!.send(session.id, '审批')

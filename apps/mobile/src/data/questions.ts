@@ -16,11 +16,11 @@ export function displayLabel(label: string): string {
 /** 每个问题都有推荐项时，返回按推荐作答的答案；否则 null */
 export function recommendedAnswers(questions: Question[]): Record<string, string> | null {
   if (questions.length === 0) return null
-  const answers: Record<string, string> = {}
+  const answers: Record<string, string> = Object.create(null)
   for (const q of questions) {
     const picks = q.options.filter(o => isRecommended(o.label)).map(o => o.label)
     if (picks.length === 0) return null
-    answers[q.question] = (q.multiSelect ? picks : picks.slice(0, 1)).join(', ')
+    answers[q.answerKey || q.question] = (q.multiSelect ? picks : picks.slice(0, 1)).join(', ')
   }
   return answers
 }
@@ -33,6 +33,11 @@ export interface QuestionDraft {
 }
 
 export const EMPTY_DRAFT: QuestionDraft = { picks: [], other: false, text: '' }
+
+export function getDraft(q: Question, drafts: Record<string, QuestionDraft>): QuestionDraft {
+  const key = q.answerKey || q.question
+  return Object.hasOwn(drafts, key) ? drafts[key] : EMPTY_DRAFT
+}
 
 /** 能不能自己输入：引擎允许，或者这题根本没有选项 */
 export const canWriteIn = (q: Question): boolean => q.allowOther === true || q.options.length === 0
@@ -62,11 +67,11 @@ export function collectAnswers(
   questions: Question[],
   drafts: Record<string, QuestionDraft>,
 ): Record<string, string> | null {
-  const answers: Record<string, string> = {}
+  const answers: Record<string, string> = Object.create(null)
   for (const q of questions) {
-    const value = draftAnswer(q, drafts[q.question] ?? EMPTY_DRAFT)
+    const value = draftAnswer(q, getDraft(q, drafts))
     if (value === null) return null
-    answers[q.question] = value
+    answers[q.answerKey || q.question] = value
   }
   return answers
 }

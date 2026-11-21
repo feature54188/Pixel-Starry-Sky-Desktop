@@ -28,6 +28,10 @@ if (process.argv.includes('--version')) {
 if (process.argv.includes('-p')) {
   let input = ''
   for await (const chunk of process.stdin) input += chunk
+  if (process.argv.includes('--no-session')) {
+    process.stdout.write(input)
+    process.exit(0)
+  }
   const file = process.argv[process.argv.indexOf('--session') + 1]
   const lines = readFileSync(file, 'utf8').split(String.fromCharCode(10)).filter(Boolean).length
   appendFileSync(

@@ -181,12 +181,16 @@ Json reduce(Json s, Json e) {
       return {...s, 'items': List<Item>.of(items)..[i] = next};
     case 'approval_request':
       final request = obj(e['request']);
+      final pending = [
+        ...objList(s['pending'])
+            .where((p) => p['requestId'] != request['requestId']),
+        request,
+      ];
       return {
         ...s,
         'pending': [
-          ...objList(s['pending'])
-              .where((p) => p['requestId'] != request['requestId']),
-          request,
+          ...pending.where((p) => p['isBlocking'] != false),
+          ...pending.where((p) => p['isBlocking'] == false),
         ],
       };
     case 'approval_resolved':

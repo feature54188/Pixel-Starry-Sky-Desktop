@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { CircleHelp, ClipboardList, FilePen, ShieldAlert, Sparkles, SquareTerminal, Wrench } from 'lucide-react'
 import type { ApprovalDecision, ApprovalRequest, Question } from '@pixelsky/protocol'
 import {
-  EMPTY_DRAFT,
+  getDraft,
   canWriteIn,
   collectAnswers,
   displayLabel,
@@ -87,6 +87,7 @@ export function ApprovalCard({
   const [busy, setBusy] = useState(false)
   const [confirmAlways, setConfirmAlways] = useState(false)
   const [drafts, setDrafts] = useState<Record<string, QuestionDraft>>({})
+  const [formText, setFormText] = useState('')
   // 没送到电脑（断线、超时、只看）：卡片还在，写明没处理成，可以再点一次
   const [error, setError] = useState<string | null>(null)
   const answer = async (d: ApprovalDecision) => {
@@ -104,6 +105,17 @@ export function ApprovalCard({
   const recommended = useMemo(() => recommendedAnswers(questions), [questions])
   const answers = collectAnswers(questions, drafts)
   const form = request.formSchema !== undefined
+  const formContent = useMemo(() => {
+    if (!form || !formText.trim()) return null
+    try {
+      const content: unknown = JSON.parse(formText)
+      return content && typeof content === 'object' && !Array.isArray(content)
+        ? (content as Record<string, unknown>)
+        : null
+    } catch {
+      return null
+    }
+  }, [form, formText])
   const scope = request.alwaysScopes[0]
   // 键盘：只在显示「拒绝 / 允许」两个按钮时
   const plain = request.kind !== 'question' && !form && !confirmAlways
@@ -197,11 +209,11 @@ export function ApprovalCard({
           <>
             {questions.map(q => (
               <QuestionField
-                key={q.question}
+                key={q.answerKey || q.question}
                 question={q}
-                draft={drafts[q.question] ?? EMPTY_DRAFT}
+                draft={getDraft(q, drafts)}
                 disabled={!canAct || busy}
-                onChange={d => setDrafts(all => ({ ...all, [q.question]: d }))}
+                onChange={d => setDrafts(all => ({ ...all, [q.answerKey || q.question]: d }))}
               />
             ))}
             <div className="flex flex-col gap-2 pt-1">
@@ -237,12 +249,35 @@ export function ApprovalCard({
           </>
         ) : form ? (
           <div className="flex flex-col gap-2">
-            <p className="rounded-2xl bg-subtle px-3.5 py-3 text-meta text-fg-secondary">
-              {L(
-                '这个请求要填一张表单，手机上还填不了，请到电脑上处理；也可以在这里拒绝。',
-                "This request needs a form that can't be filled in on the phone yet. Handle it on the computer, or deny it here.",
-              )}
-            </p>
+            <details className="rounded-2xl bg-subtle px-3.5 py-2 text-meta text-fg-secondary">
+              <summary>{L('查看表单字段', 'View form fields')}</summary>
+              <pre className="whitespace-pre-wrap break-all">{JSON.stringify(request.formSchema, null, 2)}</pre>
+            </details>
+            <label className="flex flex-col gap-1 text-meta text-fg-muted">
+              {L('表单回答（JSON 对象）', 'Form response (JSON object)')}
+              <textarea
+                rows={3}
+                value={formText}
+                disabled={!canAct || busy}
+                spellCheck={false}
+                onChange={e => setFormText(e.target.value)}
+                placeholder='{"name":"…"}'
+                className="rounded-xl border border-line bg-surface px-3 py-2 font-mono text-ui text-fg"
+              />
+            </label>
+            {formText.trim() && !formContent && (
+              <p role="status" className="text-meta text-warn">
+                {L('请输入有效的 JSON 对象', 'Enter a valid JSON object')}
+              </p>
+            )}
+            <Button
+              variant="primary"
+              className="rounded-full!"
+              disabled={!canAct || busy || request.canAllow === false || !formContent}
+              onClick={() => formContent && void answer({ type: 'form', content: formContent })}
+            >
+              {L('提交回答', 'Submit answers')}
+            </Button>
             {request.canDeny !== false && (
               <Button
                 variant="danger"
@@ -382,7 +417,10 @@ function QuestionField({
   )
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className="pb-1 text-ui font-medium">{q.question}</legend>
+      <legend className="pb-1 text-ui font-medium">
+        {q.header && q.header !== q.question && <span className="block text-meta text-fg-muted">{q.header}</span>}
+        {q.question}
+      </legend>
       {q.multiSelect && (
         <span className="-mt-1 text-label text-fg-muted">{L('可以多选', 'Select all that apply')}</span>
       )}

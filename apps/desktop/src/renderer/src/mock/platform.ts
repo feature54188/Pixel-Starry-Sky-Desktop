@@ -107,7 +107,7 @@ export const demoEngineStatus: EngineLite[] = [
     message: null,
     path: 'C:\\Users\\linxia\\AppData\\Roaming\\npm\\pixelsky.cmd',
     caps: {
-      permissionModes: ['ask', 'edits', 'plan', 'full'],
+      permissionModes: ENGINES.pixel.caps.permissionModes,
       efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       ultracode: false,
       fast: false,

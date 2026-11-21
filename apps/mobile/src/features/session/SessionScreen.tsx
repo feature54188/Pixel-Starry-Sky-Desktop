@@ -332,7 +332,7 @@ export function SessionScreen({
                   <EntryView
                     entry={entry}
                     last={i === entries.length - 1}
-                    waiting={!!pending}
+                    waiting={!!pending && pending.isBlocking !== false}
                     truncated={view.truncated}
                     onDetail={onDetail}
                     actions={actions}

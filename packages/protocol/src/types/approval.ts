@@ -7,6 +7,8 @@ export interface QuestionOption {
 }
 
 export interface Question {
+  /** 新宿主指定的答案键。旧宿主按题面收答案，因此缺省时继续使用 question。 */
+  answerKey?: string
   allowOther?: boolean
   secret?: boolean
   id?: string
@@ -17,6 +19,8 @@ export interface Question {
 }
 
 export interface ApprovalRequest {
+  /** Codex 异步提问时为 false，等待用户回答期间引擎继续运行。 */
+  isBlocking?: boolean
   formSchema?: unknown
   /** 原生请求限制；省略时兼容既有 Claude 决策。 */
   canAllow?: boolean
@@ -53,5 +57,5 @@ export type ApprovalDecision =
   /** 允许，并且以后同类操作都允许（范围见 AlwaysScope） */
   | { type: 'allow_always'; scope: AlwaysScope }
   | { type: 'deny'; message?: string }
-  /** 回答问题：键是问题原文，值是选中的选项（多选用「, 」连接） */
+  /** 回答问题：键为 answerKey 或题面，值为回答（多选用「, 」连接）。 */
   | { type: 'answer'; answers: Record<string, string> }

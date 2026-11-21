@@ -34,12 +34,15 @@ describe('modeChip', () => {
 })
 
 describe('permissionOptions', () => {
-  it('offers Claude auto-review when the paired phone may change desktop permissions', () => {
-    const auto = (allowed: boolean) => permissionOptions('claude', 'ask', allowed).find(o => o.value === 'auto')
-    expect(auto(true)).toMatchObject({ value: 'auto', label: '自动审核' })
-    expect(auto(true)?.disabled).toBeFalsy()
-    expect(auto(false)).toBeUndefined()
-  })
+  it.each(['claude', 'pixel', 'antigravity'] as const)(
+    'offers %s auto-review when the paired phone may change desktop permissions',
+    engine => {
+      const auto = (allowed: boolean) => permissionOptions(engine, 'ask', allowed).find(o => o.value === 'auto')
+      expect(auto(true)).toMatchObject({ value: 'auto', label: '自动审核' })
+      expect(auto(true)?.disabled).toBeFalsy()
+      expect(auto(false)).toBeUndefined()
+    },
+  )
 
   it('lists the current full / auto mode as disabled so the sheet has a selected row', () => {
     for (const current of ['full', 'auto'] as const) {

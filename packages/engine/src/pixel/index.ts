@@ -17,7 +17,8 @@ import { logger } from '../log'
 import type { NewerTurns } from '../native/types'
 import type { NodeRuntime } from '../npm'
 import { engineEnv, systemProxyEnv } from '../env'
-import { resolveCommand, startupReason, removeTree } from '../exec'
+import { resolveCommand, startupReason, removeTree, run } from '../exec'
+import { ONE_SHOT_TIMEOUT, type OneShotRequest, type OneShotReply } from '../oneshot'
 import { engineBase } from '../registry'
 import { runsFromSession } from './agents'
 import { customPixel, discoverPixel, pixelEnvironment, pixelShell } from './discover'
@@ -28,11 +29,13 @@ import {
   applyPixelModels,
   MCP_FILE_ENV,
   PixelSession,
+  pixelModelsConfig,
+  PROVIDERS_ENV,
   pixelLaunch,
   reservedPixelArg,
   type PixelLaunchOptions,
 } from './session'
-import { pixelSideModel, pixelSideQuestion } from './side'
+import { answerOf, pixelSideModel, pixelSideQuestion, sideUserArgs } from './side'
 import { transcriptItems } from './transcript'
 import { findNode, markOfFile, needsRealNode, pixelTuiArgs, privateNode, readSinceMark } from './tui'
 
@@ -178,6 +181,32 @@ export class PixelAdapter implements EngineAdapter {
     // 只给会话进程：旁聊是复制出来的会话文件，问一次就丢，不该花钱压缩
     if (launch.autoCompactPct) env[AUTO_COMPACT_ENV] = String(launch.autoCompactPct)
     return new PixelSession(result.launcher, env, ctx, launch)
+  }
+
+  /** 用 Pi 自己配置的账号问审核模型一次，临时工作目录、无工具、不保存会话。 */
+  async oneShot(req: OneShotRequest, signal: AbortSignal): Promise<OneShotReply> {
+    await this.info()
+    const launcher = this.cached?.launcher
+    if (!launcher) throw new Error('Pixel is unavailable')
+    const cwd = mkdtempSync(join(tmpdir(), 'pixelsky-pixel-review-'))
+    try {
+      const env = pixelEnvironment(launcher, this.env())
+      const models = pixelModelsConfig(env, req.model)
+      if (models) env[PROVIDERS_ENV] = JSON.stringify(models.providers)
+      const args = [
+        ...sideUserArgs(this.opts.launchOptions?.().args ?? []),
+        '-p',
+        '--no-session',
+        '--no-tools',
+        '--no-skills',
+      ]
+      if (req.model) args.push('--model', req.model)
+      const result = await run(launcher, args, env, ONE_SHOT_TIMEOUT, { cwd, signal, input: req.prompt })
+      if (!result.ok) throw new Error(result.error ?? 'Pixel review failed')
+      return { text: answerOf(result.stdout, result.stderr), usage: null, model: req.model }
+    } finally {
+      removeTree(cwd)
+    }
   }
 
   /** 旁聊：复制会话文件单独问一次（side.ts），不用工具，不改原会话；MCP、技能都不带 */

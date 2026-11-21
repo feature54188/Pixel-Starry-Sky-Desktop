@@ -1796,11 +1796,13 @@ export class CodexSession implements EngineSession {
         requestId: key,
         itemId,
         kind: 'question',
+        ...(params.isBlocking === false ? { isBlocking: false } : {}),
         title: title('Codex question', 'Codex subagent {agent} question'),
         questions: array(params.questions).map(raw => {
           const question = object(raw)
           return {
             id: string(question.id),
+            answerKey: string(question.id),
             question: string(question.question),
             header: string(question.header),
             multiSelect: false,
@@ -1866,16 +1868,22 @@ export class CodexSession implements EngineSession {
     if (allow && approval.request.canAllow === false) return
     if (decision.type === 'allow_always' && !approval.request.alwaysScopes.includes(decision.scope)) return
     let response: unknown
-    if (approval.method === 'item/tool/requestUserInput')
+    if (approval.method === 'item/tool/requestUserInput') {
+      const answers = decision.type === 'answer' ? decision.answers : {}
       response = {
         answers: Object.fromEntries(
-          (approval.request.questions ?? []).map(q => [
-            q.id!,
-            { answers: decision.type === 'answer' ? [decision.answers[q.question] ?? ''] : [] },
-          ]),
+          (approval.request.questions ?? []).map(q => {
+            const key = q.id!
+            const value = Object.hasOwn(answers, key)
+              ? answers[key]
+              : Object.hasOwn(answers, q.question)
+                ? answers[q.question]
+                : undefined
+            return [key, { answers: typeof value === 'string' && value.length ? [value] : [] }]
+          }),
         ),
       }
-    else if (approval.method === 'item/permissions/requestApproval')
+    } else if (approval.method === 'item/permissions/requestApproval')
       response = {
         permissions: allow ? approval.params.permissions : {},
         scope: decision.type === 'allow_always' || decision.type === 'allow_all' ? 'session' : 'turn',

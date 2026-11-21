@@ -85,6 +85,22 @@ describe('reduce', () => {
     expect(reduce(s0, { type: 'item_delta', itemId: 'x', field: 'text', delta: '…' })).toBe(s0)
   })
 
+  it('先展示阻塞请求，同类的请求保留到达顺序', () => {
+    const requests = [
+      { requestId: 'optional1', isBlocking: false },
+      { requestId: 'blocking1' },
+      { requestId: 'optional2', isBlocking: false },
+      { requestId: 'blocking2', isBlocking: true },
+    ]
+    const snap = run(
+      requests.map(request => ({
+        type: 'approval_request',
+        request: { itemId: null, kind: 'question', title: '提问', alwaysScopes: [], ...request },
+      })),
+    )
+    expect(snap.pending.map(p => p.requestId)).toEqual(['blocking1', 'blocking2', 'optional1', 'optional2'])
+  })
+
   it('审批请求按 requestId 去重，回答后移除', () => {
     const req = { requestId: 'r1', itemId: null, kind: 'command' as const, title: '运行命令', alwaysScopes: [] }
     let s = run([
