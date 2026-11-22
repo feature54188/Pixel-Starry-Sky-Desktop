@@ -81,6 +81,9 @@ describe('流程草稿（docs/ui/channels-pipeline.md §4）', () => {
     ])
     expect(() => planSteps([{ title: 'x', member: '谁' }], byName)).toThrow('不在频道里')
     expect(() => planSteps([], byName)).toThrow('非空')
+    const suggested = [{ title: '审查', member: '审查员', effort: 'low' }]
+    expect(planSteps(suggested, byName)[0].settings?.effort).toBe('low')
+    expect(planSteps(suggested, byName, false)[0].settings?.effort).toBeUndefined()
   })
 })
 

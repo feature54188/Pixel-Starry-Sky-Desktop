@@ -5,6 +5,7 @@
 //   <频道 id>/messages.jsonl     消息，只追加；任务卡的变化追加 { kind: 'task_update', id, patch }，读的时候合并
 //   <频道 id>/attachments/<消息 id>.json  消息带的图片和文件全文（消息里只有说明，按需读）
 import { randomUUID } from 'node:crypto'
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs'
 import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AgentConfig, ChannelAttachments, ChannelMessage, ChannelTask } from '../../../shared/types/channels'
@@ -20,12 +21,14 @@ import type {
 import { cleanTeammate, DEFAULT_TEAMMATE, type TeammateRules } from '../../../shared/types/channels'
 
 export interface StoredChannel {
+  roles?: Record<string, string>
   id: string
   name: string
   topic: string | null
   projectId: string | null
   /** 'you' 和 AI 成员的 id */
   memberIds: string[]
+  templateMemberIds?: string[]
   /** 频道说明：每次派活都带上（docs/ui/channels-local-ai.md §3.1 #9）；旧数据没有 */
   notes?: string | null
   /** 置顶的消息 id（先后顺序），派活时作为资料带上；旧数据没有 */
@@ -131,8 +134,16 @@ export class ChannelStore {
     for (const run of await this.readJson<TaskRun[]>(join(this.dir, 'runs.json'), [])) this.runs.set(run.taskId, run)
     for (const entry of await readdir(this.dir, { withFileTypes: true })) {
       if (!entry.isDirectory() || !ID.test(entry.name)) continue
-      const channel = await this.readJson<StoredChannel | null>(join(this.dir, entry.name, 'channel.json'), null)
+      const file = join(this.dir, entry.name, 'channel.json')
+      const channel = await this.readJson<(StoredChannel & { initialMembers?: AgentConfig[] }) | null>(file, null)
       if (!channel || channel.id !== entry.name) continue
+      if (channel.initialMembers) {
+        const known = new Set(this.members.map(m => m.id))
+        this.members.push(...channel.initialMembers.filter(m => !known.has(m.id)))
+        await this.saveMembers()
+        delete channel.initialMembers
+        await this.atomic(file, channel)
+      }
       this.channels.set(channel.id, channel)
       const list: ChannelMessage[] = [],
         index = new Map<string, number>()
@@ -147,6 +158,13 @@ export class ChannelStore {
       this.messages.set(channel.id, list)
       this.index.set(channel.id, new Map(list.map((m, i) => [m.id, i])))
       this.lines.set(channel.id, count)
+    }
+    // members.json 和频道名单分开落盘。两次写入之间退出时，清理没有频道的分身。
+    const assigned = new Set([...this.channels.values()].flatMap(c => c.memberIds))
+    const surviving = this.members.filter(m => !m.cloneOf || assigned.has(m.id))
+    if (surviving.length !== this.members.length) {
+      this.members = surviving
+      await this.saveMembers()
     }
     // 频道已经删了的活不再跟踪
     for (const [id, run] of this.runs) if (!run.team && !this.channels.has(run.channelId)) this.runs.delete(id)
@@ -204,6 +222,24 @@ export class ChannelStore {
       await this.write(() => mkdir(join(this.dir, channel.id), { recursive: true }).then(() => {}))
     }
     return this.atomic(join(this.dir, channel.id, 'channel.json'), channel)
+  }
+
+  /** 新频道的首份记录同时包含成员快照。重启时可以补完 members.json。 */
+  async createProjectChannel(channel: StoredChannel, copies: AgentConfig[]): Promise<void> {
+    const dir = join(this.dir, channel.id)
+    const file = join(dir, 'channel.json')
+    // 名称校验到提交之间没有 await，同时创建的频道能看到前一个已占的成员名。
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(file + '.tmp', JSON.stringify({ ...channel, initialMembers: copies }), 'utf8')
+    renameSync(file + '.tmp', file)
+    this.members = [...this.members, ...copies]
+    this.channels.set(channel.id, channel)
+    this.messages.set(channel.id, [])
+    this.index.set(channel.id, new Map())
+    this.lines.set(channel.id, 0)
+    await this.saveMembers()
+    const current = this.channels.get(channel.id)
+    if (current) await this.atomic(file, current)
   }
 
   deleteChannel(id: string): Promise<void> {

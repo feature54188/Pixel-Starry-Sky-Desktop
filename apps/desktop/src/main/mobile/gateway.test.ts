@@ -800,6 +800,9 @@ describe('MobileGateway calls', () => {
         attached: { images: [{ name: 'a' }], files: [{ name: 'f.txt' }] },
       }),
       msg('m2', { threadId: 'm1' }),
+      ...['roleChanged', 'cloneAdded', 'cloneRemoved', 'guideUpdated'].map(event =>
+        msg(event, { kind: 'event', event, actorId: 'a1', targetId: 'deleted', value: '开发 2' }),
+      ),
       {
         id: 't1',
         channelId: 'c1',
@@ -861,10 +864,25 @@ describe('MobileGateway calls', () => {
       text: 'C',
     })
     const page = (await p.call('channelMessages', 'c1')) as { messages: Record<string, unknown>[] }
-    expect(page.messages.map(m => m.id)).toEqual(['m1', 't1'])
+    expect(page.messages.map(m => m.id)).toEqual([
+      'm1',
+      'roleChanged',
+      'cloneAdded',
+      'cloneRemoved',
+      'guideUpdated',
+      't1',
+    ])
+    for (const entry of page.messages.slice(1, 5))
+      expect(entry).toMatchObject({
+        kind: 'event',
+        event: entry.id,
+        actorId: 'a1',
+        targetId: 'deleted',
+        value: '开发 2',
+      })
     expect((page.messages[0].text as string).length).toBe(CHANNEL_TEXT_LIMIT + 1)
     expect(page.messages[0]).toMatchObject({ images: 1, files: ['f.txt'] })
-    expect(page.messages[1]).toMatchObject({ kind: 'task', status: 'done', sessionId: 's9' })
+    expect(page.messages.at(-1)).toMatchObject({ kind: 'task', status: 'done', sessionId: 's9' })
     await expect(p.call('channelMessages', 'nope')).rejects.toThrow('MOBILE_NOT_FOUND')
     expect(await p.call('channelImage', 'c1', 'm1', 0)).toMatchObject({ dataBase64: 'small' })
 

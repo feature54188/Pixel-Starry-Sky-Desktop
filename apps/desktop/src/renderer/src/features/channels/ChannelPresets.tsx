@@ -273,6 +273,9 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
   const agents = allMembers.filter((m): m is AgentMember => m.kind === 'agent')
   const [name, setName] = useState(channel.name)
   const [parts, setParts] = useState<readonly PresetPart[]>(DEFAULT_PRESET_PARTS)
+  const [reserves, setReserves] = useState<string[]>(
+    () => channel.templateMemberIds?.filter(id => !channel.memberIds.includes(id)) ?? [],
+  )
   const [overwrite, setOverwrite] = useState(true)
   const conflict = presets.items.find(p => sameName(p.name, name))
   const [wantDefault, setWantDefault] = useState<boolean | null>(null)
@@ -314,6 +317,9 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
     if (blocked) return
     const id = conflict?.id ?? crypto.randomUUID()
     const preset = presetFromChannel(channel, agents, { id, name: name.trim(), updatedAt: Date.now() }, parts)
+    preset.reserveIds = (preset.members ?? [])
+      .map(m => m.sourceId)
+      .filter(id => reserves.includes(id) && id !== preset.lead)
     try {
       const next = withPreset(presets, preset, makeDefault)
       setPresets(!makeDefault && next.defaultId === id ? { ...next, defaultId: null } : next)
@@ -383,6 +389,25 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
               ))}
             </div>
           </fieldset>
+          {parts.includes('members') && picked.some(m => m.id !== channel.lead) && (
+            <fieldset className="flex flex-col gap-1">
+              <legend className="text-meta text-fg-muted">{tr('channels.template.reserve')}</legend>
+              {picked
+                .filter(m => m.id !== channel.lead)
+                .map(m => (
+                  <label key={m.id} className="flex items-center gap-2 text-list">
+                    <input
+                      type="checkbox"
+                      checked={reserves.includes(m.id)}
+                      onChange={e =>
+                        setReserves(ids => (e.target.checked ? [...ids, m.id] : ids.filter(id => id !== m.id)))
+                      }
+                    />
+                    {m.name}
+                  </label>
+                ))}
+            </fieldset>
+          )}
           <label className="flex items-center gap-2 text-list text-fg">
             <input
               type="checkbox"
@@ -404,6 +429,10 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
 export function ManagePresetsDialog({ onClose }: { onClose: () => void }) {
   useI18n()
   const presets = usePresets()
+  const channels = useChannels(s => s.channels).filter(c => c.scope === 'local')
+  const members = useChannels(s => s.members).filter((m): m is AgentMember => m.kind === 'agent')
+  const [picking, setPicking] = useState(false)
+  const [source, setSource] = useState<Channel | null>(null)
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -427,6 +456,7 @@ export function ManagePresetsDialog({ onClose }: { onClose: () => void }) {
     const current = presets.items.find(p => p.id === renaming.id)
     if (current && write(withPreset(presets, { ...current, name, updatedAt: Date.now() }, false))) setRenaming(null)
   }
+  if (source) return <SavePresetDialog channel={source} onClose={() => setSource(null)} />
   return (
     <ConfirmDialog
       title={tr('channels.preset.manage')}
@@ -439,6 +469,22 @@ export function ManagePresetsDialog({ onClose }: { onClose: () => void }) {
       onCancel={onClose}
       description={
         <div data-preset-manage-list className="flex flex-col gap-3">
+          {channels.length > 0 &&
+            (picking ? (
+              <CopyFromChannel
+                channels={channels}
+                members={members}
+                onPick={c => {
+                  setPicking(false)
+                  setSource(c)
+                }}
+                onCancel={() => setPicking(false)}
+              />
+            ) : (
+              <button type="button" className={cn(LINK, 'self-start')} onClick={() => setPicking(true)}>
+                {tr('channels.template.saveFrom')}
+              </button>
+            ))}
           {presets.items.length === 0 ? (
             <p className="text-meta text-fg-muted">{tr('channels.preset.manageEmpty')}</p>
           ) : (

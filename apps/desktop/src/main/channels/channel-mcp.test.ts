@@ -1,4 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { projectGuide } from '../core/channels/project-guide'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { SessionRecord } from '@pixelsky/protocol'
@@ -14,8 +18,10 @@ afterEach(async () => {
 })
 
 /** 只实现工具要用的几个方法：记下调用 */
-function fakeChannels(calls: unknown[][]): Channels {
+function fakeChannels(calls: unknown[][], isLead = false): Channels {
   return {
+    canManageRoster: () => isLead,
+    toolRoster: (...args: unknown[]) => (calls.push(['roster', ...args]), '完成'),
     sessionMember: (id: string) => (id === 's1' ? { memberId: 'm1', tools: { mode: 'only', ids: ['x'] } } : null),
     toolRead: (...args: unknown[]) => (calls.push(['read', ...args]), '读到了'),
     toolThread: (...args: unknown[]) => (calls.push(['thread', ...args]), '串'),
@@ -32,6 +38,56 @@ function fakeChannels(calls: unknown[][]): Channels {
 const record = (id: string) => ({ id }) as SessionRecord
 
 describe('频道工具 MCP（docs/ui/channels-collab-v2.md §1）', () => {
+  it('牵头工具严格校验参数和版本，每次调用重新检查身份', async () => {
+    const calls: unknown[][] = []
+    let lead = true
+    const root = await mkdtemp(join(tmpdir(), 'channel-guide-'))
+    const channels = fakeChannels(calls)
+    channels.canManageRoster = () => lead
+    channels.toolProjectGuide = async (_session, action, content, version) =>
+      JSON.stringify(await projectGuide(root, action, content, version, () => {}))
+    server = channelToolsServer(() => channels)
+    try {
+      const own = await server.forSession(record('s1'))
+      const client = new Client({ name: 'lead', version: '1' })
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(own!.entry!.url), {
+          requestInit: { headers: { Authorization: 'Bearer ' + own!.entry!.token } },
+        }),
+      )
+      clients.push(client)
+      expect((await client.listTools()).tools.map(t => t.name)).toEqual(
+        expect.arrayContaining(['channel_roster', 'project_guide']),
+      )
+      const roster = (args: Record<string, unknown>) => client.callTool({ name: 'channel_roster', arguments: args })
+      const guide = (args: Record<string, unknown>) => client.callTool({ name: 'project_guide', arguments: args })
+      for (const extra of [
+        { count: 2 },
+        { model: 'other' },
+        { engine: 'claude' },
+        { permissionMode: 'full' },
+        { settings: {} },
+        { tools: [] },
+        { instructions: '职责' },
+      ]) {
+        expect((await roster({ action: 'add_clone', name: '审查', ...extra })).isError).toBe(true)
+      }
+      await roster({ action: 'add', name: '审查' })
+      await roster({ action: 'set_role', name: '审查', instructions: '' })
+      expect(calls).toEqual([
+        ['roster', 's1', 'add', '审查', undefined],
+        ['roster', 's1', 'set_role', '审查', ''],
+      ])
+      expect((await guide({ action: 'read', path: 'other' })).isError).toBe(true)
+      expect((await guide({ action: 'write', content: '更新', version: 'wrong' })).isError).toBe(true)
+      lead = false
+      expect((await client.listTools()).tools.map(t => t.name)).not.toContain('project_guide')
+      expect((await guide({ action: 'read' })).isError).toBe(true)
+      expect((await roster({ action: 'list' })).isError).toBe(true)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
   it('只给本机的频道会话；令牌认出调用方会话，参数传给频道服务，出错变成工具错误', async () => {
     const calls: unknown[][] = []
     server = channelToolsServer(() => fakeChannels(calls))

@@ -124,6 +124,12 @@ export interface ChannelsBridge {
   markRead(channelId: string): Promise<void>
   /** 新建或编辑 AI 成员；带 channelId 时顺便加进这个频道。返回成员 id */
   saveMember(channelId: string | null, input: AgentInput): Promise<string>
+  adjustRoster(
+    channelId: string,
+    memberId: string,
+    action: 'add' | 'remove' | 'set_role',
+    role?: string,
+  ): Promise<string>
   addMember(channelId: string, memberId: string): Promise<void>
   removeMember(channelId: string, memberId: string): Promise<void>
   deleteMember(memberId: string): Promise<void>

@@ -32,11 +32,22 @@ export const PRESET_NAME_MAX = 40
 /** 成员配置快照：不存 id、会话、机器（机器由项目算），不含密钥（额度来源只有分组、账号或接口 id） */
 export type PresetMemberConfig = Pick<
   AgentConfig,
-  'name' | 'engine' | 'projectId' | 'copyId' | 'settings' | 'instructions' | 'mode' | 'tools' | 'avatar'
+  | 'name'
+  | 'engine'
+  | 'projectId'
+  | 'copyId'
+  | 'settings'
+  | 'instructions'
+  | 'mode'
+  | 'tools'
+  | 'avatar'
+  | 'copyPerTask'
+  | 'sameDir'
 >
 
 /** 除了 id、名字和时间，没写的字段 = 存的时候没勾，新建时用表单默认值 */
 export interface ChannelPreset {
+  reserveIds?: string[]
   id: string
   name: string
   updatedAt: number
@@ -45,6 +56,8 @@ export interface ChannelPreset {
   members?: { sourceId: string; config: PresetMemberConfig }[]
   lead?: string | null
   leadRoute?: boolean
+  leadWake?: boolean
+  leadDispatchOnly?: boolean
   planFirst?: boolean
   relay?: boolean
   relayRules?: RelayRules
@@ -79,6 +92,8 @@ function parseMember(raw: unknown): NonNullable<ChannelPreset['members']>[number
       instructions: typeof c.instructions === 'string' ? c.instructions : '',
       mode: c.mode === 'shared' ? 'shared' : 'per-task',
       ...(c.tools ? { tools: c.tools } : {}),
+      ...(c.copyPerTask ? { copyPerTask: true } : {}),
+      ...(c.sameDir ? { sameDir: c.sameDir } : {}),
       // 存下来的 JSON 可能被改过：主进程 saveMember 还会再校验一次
       ...(cleanAvatar(c.avatar) ? { avatar: cleanAvatar(c.avatar)! } : {}),
     },
@@ -96,8 +111,11 @@ function parsePreset(raw: unknown): ChannelPreset | null {
   if (typeof p.projectId === 'string' || p.projectId === null) preset.projectId = p.projectId
   if (typeof p.notes === 'string' || p.notes === null) preset.notes = p.notes
   if (Array.isArray(p.members)) preset.members = p.members.map(parseMember).filter(m => m !== null)
+  if (Array.isArray(p.reserveIds)) preset.reserveIds = p.reserveIds.filter((id): id is string => typeof id === 'string')
   if (typeof p.lead === 'string' || p.lead === null) preset.lead = p.lead
   if (typeof p.leadRoute === 'boolean') preset.leadRoute = p.leadRoute
+  if (typeof p.leadWake === 'boolean') preset.leadWake = p.leadWake
+  if (typeof p.leadDispatchOnly === 'boolean') preset.leadDispatchOnly = p.leadDispatchOnly
   if (typeof p.planFirst === 'boolean') preset.planFirst = p.planFirst
   if (typeof p.relay === 'boolean') preset.relay = p.relay
   if (p.relayRules !== undefined)
@@ -175,7 +193,14 @@ export const DEFAULT_PRESET_PARTS: readonly PresetPart[] = ['members', 'dispatch
 
 /** 能进预设的成员：自己的、有配置的（团队里别人的成员不算） */
 export const presetableMembers = (channel: Channel, members: readonly AgentMember[]): AgentMember[] =>
-  members.filter(m => channel.memberIds.includes(m.id) && !!m.config && m.mine !== false && !m.teamAgentId)
+  members.filter(
+    m =>
+      (channel.memberIds.includes(m.id) || channel.templateMemberIds?.includes(m.id)) &&
+      !!m.config &&
+      !m.config.cloneOf &&
+      m.mine !== false &&
+      !m.teamAgentId,
+  )
 
 /** 频道 → 预设（「存为预设」和「从频道复制」共用）；parts 是要带的部分 */
 export function presetFromChannel(
@@ -201,14 +226,20 @@ export function presetFromChannel(
           mode,
           ...(tools ? { tools } : {}),
           ...(avatar ? { avatar } : {}),
+          ...(m.config!.copyPerTask ? { copyPerTask: true } : {}),
+          ...(m.config!.sameDir ? { sameDir: m.config!.sameDir } : {}),
         },
       }
     })
   if (parts.includes('dispatch')) {
+    const reserves = picked.filter(m => !channel.memberIds.includes(m.id)).map(m => m.id)
+    if (reserves.length) preset.reserveIds = reserves
     preset.relay = channel.relay === true
     preset.relayRules = relayRulesOf(channel)
     preset.planFirst = channel.planFirst !== false
     preset.leadRoute = channel.leadRoute !== false
+    preset.leadWake = channel.leadWake !== false
+    preset.leadDispatchOnly = channel.leadDispatchOnly === true
     // 牵头是带上的成员之一才有意义
     preset.lead = picked.some(m => m.id === channel.lead) ? channel.lead : null
   }

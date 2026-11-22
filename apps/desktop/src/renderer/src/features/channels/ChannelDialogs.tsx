@@ -146,7 +146,7 @@ const toggleOf = (v: boolean | undefined): Toggle => (v === undefined ? 'follow'
 const toggleValue = (t: Toggle): boolean | undefined => (t === 'follow' ? undefined : t === 'on')
 
 /** 项目下拉：机器没连上的项目不能选 */
-function useProjectOptions(): SelectOption<string>[] {
+export function useProjectOptions(): SelectOption<string>[] {
   const projects = useEngineState(s => s.projects)
   const { machines } = useMachines()
   return useMemo(

@@ -25,6 +25,38 @@ const RECORD = { readOnlyHint: true, destructiveHint: false, idempotentHint: fal
 
 const TOOLS = [
   {
+    name: 'channel_roster',
+    description:
+      '仅牵头可用。list 查看成员特点、分工、分身和未结任务。add 引入候选或为在岗本体增加一个分身。remove 删除一个分身或撤回本体。set_role 设置本频道分工，传空字符串清除。add_clone 和 remove_clone 专用于分身。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['list', 'add', 'remove', 'set_role', 'add_clone', 'remove_clone'] },
+        name: { type: 'string', description: '成员名，list 不填' },
+        instructions: { type: 'string', description: '仅 set_role 使用。本频道分工，空串清除' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    annotations: { ...WRITE, destructiveHint: true },
+  },
+  {
+    name: 'project_guide',
+    description:
+      '仅牵头可用。read 读取默认本机项目根目录的 AGENTS.md 全文和版本。write 提交全文及刚读到的版本，最多 32 KB。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['read', 'write'] },
+        content: { type: 'string' },
+        version: { type: 'string' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    annotations: { ...WRITE, destructiveHint: true },
+  },
+  {
     name: 'channel_read',
     description:
       '读你所在协作频道主时间线的消息（从旧到新）：真人和 AI 成员的消息、任务卡（谁交给谁、标题、状态）、提议。默认最近 20 条；给 before（某条消息的 id）往前翻。派活时只带了最近几条，要更早的背景时用。',
@@ -235,6 +267,7 @@ const INSTRUCTIONS =
   '你是像素星空协作频道里的 AI 成员。channel_read / thread_read 查频道记录；channel_reply 在你这项活的串里写进展；' +
   'task_propose 提议给别的成员派活（用户决定）；频道允许时 task_handover 直接交接。' +
   '流程里的一步：做完调用 task_done 交付，需要别的成员提供东西用 member_ask，要用户拍板的用 user_ask。' +
+  '牵头在用户说明需求后可用 channel_roster 调整分工与分身，用 project_guide 维护项目约定。没有明确需求时不要调整。' +
   '要看频道里的图片和附件用 attachment_read，不要开电脑控制、截屏去看。' +
   '要过一会儿或定期回来看这件事（等 CI、等部署）用 schedule_wakeup。不能删消息、改频道设置、给别的频道发消息。'
 
@@ -248,18 +281,64 @@ const str = (args: ToolArgs, key: string, required = false): string | undefined 
   return value
 }
 
+function onlyKeys(args: ToolArgs, allowed: string[]) {
+  if (Object.keys(args).some(k => !allowed.includes(k))) throw new Error('操作包含不支持的参数')
+}
+
+function stringIncludingEmpty(args: ToolArgs, key: string): string {
+  if (typeof args[key] !== 'string') throw new Error('参数 ' + key + ' 必须是字符串')
+  return args[key]
+}
+
+const leadTool = (name: string) => name === 'channel_roster' || name === 'project_guide'
+
 function mcpServer(channels: () => Channels | null, sessionId: string): Server {
   const server = new Server(
     { name: CHANNEL_SERVER_NAME, version: '1.0.0' },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
   )
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: TOOLS.filter(tool => !leadTool(tool.name) || channels()?.canManageRoster(sessionId)),
+  }))
   server.setRequestHandler(CallToolRequestSchema, async request => {
     try {
       const c = channels()
       if (!c) return text('频道还没有就绪，稍后再试。', true)
       const args = (request.params.arguments ?? {}) as ToolArgs
+      if (leadTool(request.params.name) && !c.canManageRoster(sessionId))
+        throw new Error('只有当前频道牵头可以使用此工具')
       switch (request.params.name) {
+        case 'channel_roster': {
+          const action = str(args, 'action', true)!
+          onlyKeys(
+            args,
+            action === 'list'
+              ? ['action']
+              : action === 'set_role'
+                ? ['action', 'name', 'instructions']
+                : ['action', 'name'],
+          )
+          return text(
+            await c.toolRoster(
+              sessionId,
+              action,
+              str(args, 'name', action !== 'list'),
+              action === 'set_role' ? stringIncludingEmpty(args, 'instructions') : undefined,
+            ),
+          )
+        }
+        case 'project_guide': {
+          const action = str(args, 'action', true)!
+          onlyKeys(args, action === 'write' ? ['action', 'content', 'version'] : ['action'])
+          return text(
+            await c.toolProjectGuide(
+              sessionId,
+              action,
+              action === 'write' ? stringIncludingEmpty(args, 'content') : undefined,
+              str(args, 'version', action === 'write'),
+            ),
+          )
+        }
         case 'channel_read':
           return text(c.toolRead(sessionId, { before: str(args, 'before'), limit: integer(args, 'limit') }))
         case 'thread_read':

@@ -690,6 +690,15 @@ export const channelActions = {
     if (!channelsBridge) return Promise.resolve()
     return channelsBridge.leaveSession(sessionId, channelId)
   },
+  async adjustRoster(
+    channelId: string,
+    memberId: string,
+    action: 'add' | 'remove' | 'set_role',
+    role?: string,
+  ): Promise<string> {
+    if (!channelsBridge) throw new Error(tr('channels.template.desktopOnly'))
+    return channelsBridge.adjustRoster(channelId, memberId, action, role)
+  },
   addMember(channelId: string, memberId: string): Promise<void> {
     return channelsBridge ? channelsBridge.addMember(channelId, memberId) : demo.addMember(channelId, memberId)
   },

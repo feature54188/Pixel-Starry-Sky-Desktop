@@ -135,6 +135,7 @@ export type AgentSettings = Partial<
 
 /** AI 成员的配置（全局，可以加进多个频道；docs/ui/channels-phase-b.md §2.2），存在 members.json */
 export interface AgentConfig {
+  cloneOf?: string
   id: string
   name: string
   engine: EngineId
@@ -263,6 +264,9 @@ export interface AgentMember {
 export type ChannelMember = HumanMember | AgentMember
 
 export interface Channel {
+  roles?: Record<string, string>
+  /** 可由牵头引入本频道的项目成员（已根据用户模板创建）。 */
+  templateMemberIds?: string[]
   id: string
   name: string
   topic: string | null
@@ -932,6 +936,10 @@ export function cleanRelayRules(raw: unknown): RelayRules {
 export interface ChannelEvent extends ChannelMessageBase {
   kind: 'event'
   event:
+    | 'roleChanged'
+    | 'cloneAdded'
+    | 'cloneRemoved'
+    | 'guideUpdated'
     | 'joined'
     | 'added'
     | 'removed'
@@ -1129,6 +1137,8 @@ export interface ChannelMessagePush {
 }
 
 export interface ChannelInput {
+  /** 为目标项目创建独立 AI 成员，sourceId 只用于映射预设里的牵头。 */
+  template?: ProjectChannelTemplate
   name: string
   topic?: string | null
   projectId?: string | null
@@ -1136,6 +1146,30 @@ export interface ChannelInput {
   memberIds?: string[]
   /** Phase C：建在哪个团队里；不写是本机频道 */
   teamId?: string | null
+}
+
+export interface ProjectChannelTemplate {
+  reserveIds?: string[]
+  members: {
+    sourceId: string
+    config: Pick<
+      AgentInput,
+      'name' | 'engine' | 'settings' | 'instructions' | 'mode' | 'tools' | 'avatar' | 'sameDir' | 'copyPerTask'
+    >
+  }[]
+  lead?: string | null
+  notes?: string | null
+  relay?: boolean
+  relayRules?: RelayRules
+  planFirst?: boolean
+  leadRoute?: boolean
+  leadWake?: boolean
+  leadDispatchOnly?: boolean
+  notify?: ChannelNotify
+  alerts?: Partial<Record<ChannelAlertRule, boolean>>
+  digestHour?: number
+  maxRejects?: number
+  stalledMinutes?: number
 }
 
 /** 把已有的会话加入频道（docs/ui/import-collab.md 第 5 项②）：channelId 不写时新建一个叫 channelName 的频道 */

@@ -579,6 +579,7 @@ const channels: ChannelsBridge = {
   bindRunner: (memberId, on) => call('channels:bindRunner', memberId, on),
   search: (text, opts) => call('channels:search', text, opts),
   saveMember: (channelId, input) => call('channels:saveMember', channelId, input),
+  adjustRoster: (channelId, memberId, action, role) => call('channels:adjustRoster', channelId, memberId, action, role),
   addMember: (channelId, memberId) => call('channels:addMember', channelId, memberId),
   removeMember: (channelId, memberId) => call('channels:removeMember', channelId, memberId),
   deleteMember: memberId => call('channels:deleteMember', memberId),

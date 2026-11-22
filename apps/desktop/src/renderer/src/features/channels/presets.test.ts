@@ -115,8 +115,13 @@ describe('presetFromChannel', () => {
     expect(parsePresets(JSON.stringify({ items: [bad] })).items[0].members?.[0].config).not.toHaveProperty('avatar')
   })
   it('别人的成员、没有配置的成员、不在频道里的不进预设', () => {
-    const list = [agent('a', { mine: false }), agent('b', { config: undefined }), agent('c')]
-    expect(presetFromChannel(channel({ memberIds: ['a', 'b'] }), list, head).members).toEqual([])
+    const list = [
+      agent('a', { mine: false }),
+      agent('b', { config: undefined }),
+      agent('c'),
+      agent('d', { config: { ...config('d'), cloneOf: 'c' } }),
+    ]
+    expect(presetFromChannel(channel({ memberIds: ['a', 'b', 'd'] }), list, head).members).toEqual([])
   })
   it('没勾的部分不写', () => {
     const preset = presetFromChannel(channel({ notes: '说明', lead: 'a' }), [agent('a')], head, ['notes'])

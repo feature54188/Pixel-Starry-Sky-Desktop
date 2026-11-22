@@ -489,6 +489,22 @@ String eventText(ChannelEntry e, Map<String, ChannelMember> members) {
     'added' || 'agentAdded' => L('$actor 添加了 $target', '$actor added $target'),
     'removed' ||
     'agentRemoved' => L('$actor 移除了 $target', '$actor removed $target'),
+    'roleChanged' => L(
+      '$actor 更新了 ${e.value ?? target} 的频道分工',
+      '$actor updated the channel assignment for ${e.value ?? target}',
+    ),
+    'cloneAdded' => L(
+      '$actor 增加了分身 ${e.value ?? target}',
+      '$actor added clone ${e.value ?? target}',
+    ),
+    'cloneRemoved' => L(
+      '$actor 撤下了分身 ${e.value ?? target}',
+      '$actor removed clone ${e.value ?? target}',
+    ),
+    'guideUpdated' => L(
+      '$actor 更新了项目 AGENTS.md',
+      '$actor updated the project AGENTS.md',
+    ),
     'renamed' => L(
       '$actor 把频道改名为「${e.value ?? ''}」',
       '$actor renamed the channel to “${e.value ?? ''}”',

@@ -228,9 +228,34 @@ function DayBars({ days }: { days: number[] }) {
 }
 
 /** 档案（docs/ui/channels-phase-b.md §8）：职责、工作方式、最近 30 天、目录 */
-function AgentDetails({ member }: { member: AgentMember }) {
+function AgentDetails({
+  member,
+  channelId,
+  assignment,
+  editable,
+}: {
+  member: AgentMember
+  channelId: string
+  assignment?: string
+  editable: boolean
+}) {
   useI18n()
   const config = member.config
+  const toast = useToast()
+  const [draft, setDraft] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const save = async () => {
+    if (draft === null || saving) return
+    setSaving(true)
+    try {
+      await channelActions.adjustRoster(channelId, member.id, 'set_role', draft)
+      setDraft(null)
+    } catch (e) {
+      toast(translateMessage((e as Error).message))
+    } finally {
+      setSaving(false)
+    }
+  }
   if (!config) return null
   return (
     <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 rounded-md bg-subtle px-2 py-1.5 text-meta">
@@ -238,6 +263,33 @@ function AgentDetails({ member }: { member: AgentMember }) {
         <>
           <dt className="text-fg-faint">{tr('channels.members.instructions')}</dt>
           <dd className="line-clamp-3 min-w-0 break-words text-fg-secondary">{config.instructions}</dd>
+        </>
+      )}
+      {assignment !== undefined && (
+        <>
+          <dt className="text-fg-faint">{tr('channels.members.assignment')}</dt>
+          <dd className="min-w-0 text-fg-secondary">
+            {editable ? (
+              <>
+                <textarea
+                  className="w-full rounded bg-surface px-1.5 py-1"
+                  aria-label={tr('channels.members.assignment')}
+                  rows={2}
+                  maxLength={2000}
+                  disabled={saving}
+                  value={draft ?? assignment}
+                  onChange={e => setDraft(e.target.value)}
+                />
+                {draft !== null && draft !== assignment && (
+                  <Button variant="ghost" disabled={saving} onClick={() => void save()}>
+                    {tr('channels.members.saveRole')}
+                  </Button>
+                )}
+              </>
+            ) : (
+              assignment || '—'
+            )}
+          </dd>
         </>
       )}
       <dt className="text-fg-faint">{tr('channels.members.mode')}</dt>
@@ -286,6 +338,7 @@ function dirText(member: AgentMember, copyName: string | undefined): string {
 
 function AgentRow({
   member,
+  assignment,
   channelId,
   live,
   team,
@@ -302,6 +355,7 @@ function AgentRow({
   onPolicy,
 }: {
   member: AgentMember
+  assignment?: string
   /** 是这个频道的牵头成员 */
   lead: boolean
   /** 这个频道里排队的活数（channels-side-panels §4.3） */
@@ -329,6 +383,7 @@ function AgentRow({
   // 队列清空后收起：下次有新的排队不自己弹开
   if (queueOpen && queued === 0) setQueueOpen(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const toast = useToast()
   const line = agentLine(member, Date.now())
   const status = tr(STATUS_LABEL[member.status])
   // 别人的 AI 成员：只读，没有「打开会话」和档案
@@ -354,6 +409,19 @@ function AgentRow({
         ...(member.config
           ? [{ label: tr('channels.members.edit'), icon: Pencil, run: () => onEdit(member.config!) }]
           : []),
+        ...(!readOnly && !team && config && !config.cloneOf && !config.bound
+          ? [
+              {
+                label: tr('channels.members.addClone'),
+                icon: UserPlus,
+                run: () => {
+                  void channelActions
+                    .adjustRoster(channelId, member.id, 'add')
+                    .catch(e => toast(translateMessage((e as Error).message)))
+                },
+              },
+            ]
+          : []),
         // 复制：新成员加进这个频道，所以归档的频道、团队频道（成员要另外登记）没有
         ...(member.config && !readOnly && !team
           ? [{ label: tr('channels.members.duplicate'), icon: Copy, run: () => onDuplicate(member.config!) }]
@@ -371,7 +439,7 @@ function AgentRow({
           ? []
           : [
               {
-                label: tr('channels.members.remove'),
+                label: tr(config?.cloneOf ? 'channels.members.removeClone' : 'channels.members.remove'),
                 icon: UserMinus,
                 danger: true,
                 separator: true,
@@ -383,6 +451,7 @@ function AgentRow({
     <div
       className={cn(
         'group/agent flex min-w-0 flex-wrap gap-x-2.5 rounded-lg bg-surface px-2.5 py-2',
+        config?.cloneOf && 'ml-4 border-l border-line-subtle',
         member.status === 'offline' && 'opacity-60',
       )}
     >
@@ -408,6 +477,7 @@ function AgentRow({
             className="flex max-w-full min-w-0 items-center gap-1 text-left text-list font-medium text-fg"
           >
             <span className="truncate">{member.name}</span>
+            {config?.cloneOf && <span className="text-meta text-fg-muted">{tr('channels.members.clone')}</span>}
             {lead && <LeadTag />}
             <ChevronDown
               size={12}
@@ -511,7 +581,15 @@ function AgentRow({
             />
           </div>
         )}
-        {open && <AgentDetails member={member} />}
+        {open && (
+          <AgentDetails
+            key={channelId}
+            member={member}
+            channelId={channelId}
+            assignment={assignment}
+            editable={live && !readOnly}
+          />
+        )}
       </div>
       {foreign && !canRemoveOthers ? null : live ? (
         <IconButton
@@ -625,7 +703,11 @@ export function ChannelMembers({
   // 可以加进来的：我自己的全局 AI 成员（别人的、团队频道里登记的不算）
   const others = allMembers.filter(
     (m): m is AgentMember =>
-      m.kind === 'agent' && !channel.memberIds.includes(m.id) && m.mine !== false && !m.teamAgentId,
+      m.kind === 'agent' &&
+      !channel.memberIds.includes(m.id) &&
+      m.mine !== false &&
+      !m.teamAgentId &&
+      !m.config?.cloneOf,
   )
   const team = channel.scope === 'team'
   const role = useChannels(s => myRole(s.teams, channel.teamId))
@@ -789,32 +871,36 @@ export function ChannelMembers({
             )
           })}
           <div className="flex flex-col gap-1.5">
-            {agents.map(m => (
-              <AgentRow
-                key={m.id}
-                member={m}
-                lead={channel.lead === m.id}
-                queued={memberLoad(channel, m).queued}
-                dirPeers={(m.sharesDirWith ?? []).filter(n => n !== m.name && agents.some(a => a.name === n))}
-                copyName={copyNameOf(m)}
-                onDuplicate={config => setDialog({ kind: 'agent', editing: null, from: config })}
-                channelId={channel.id}
-                live={live}
-                team={team}
-                canRemoveOthers={live && owner}
-                readOnly={archived}
-                onPolicy={(member, policy) =>
-                  policy === 'team'
-                    ? setDialog({ kind: 'policy', member })
-                    : policy === 'listed'
-                      ? setDialog({ kind: 'listed', member })
-                      : void channelActions.setAgentPolicy(channel.id, member.id, policy).catch(policyFailed)
-                }
-                onOpenSession={onOpenSession}
-                onEdit={config => setDialog({ kind: 'agent', editing: config })}
-                onRemove={member => setDialog({ kind: 'remove', member })}
-              />
-            ))}
+            {agents
+              .filter(a => !a.config?.cloneOf)
+              .flatMap(a => [a, ...agents.filter(clone => clone.config?.cloneOf === a.id)])
+              .map(m => (
+                <AgentRow
+                  key={m.id}
+                  member={m}
+                  assignment={team ? undefined : (channel.roles?.[m.id] ?? '')}
+                  lead={channel.lead === m.id}
+                  queued={memberLoad(channel, m).queued}
+                  dirPeers={(m.sharesDirWith ?? []).filter(n => n !== m.name && agents.some(a => a.name === n))}
+                  copyName={copyNameOf(m)}
+                  onDuplicate={config => setDialog({ kind: 'agent', editing: null, from: config })}
+                  channelId={channel.id}
+                  live={live}
+                  team={team}
+                  canRemoveOthers={live && owner}
+                  readOnly={archived}
+                  onPolicy={(member, policy) =>
+                    policy === 'team'
+                      ? setDialog({ kind: 'policy', member })
+                      : policy === 'listed'
+                        ? setDialog({ kind: 'listed', member })
+                        : void channelActions.setAgentPolicy(channel.id, member.id, policy).catch(policyFailed)
+                  }
+                  onOpenSession={onOpenSession}
+                  onEdit={config => setDialog({ kind: 'agent', editing: config })}
+                  onRemove={member => setDialog({ kind: 'remove', member })}
+                />
+              ))}
           </div>
         </Section>
         {!team && !archived && leadOptions.length > 0 && (

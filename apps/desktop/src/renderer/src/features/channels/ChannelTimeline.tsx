@@ -37,6 +37,15 @@ function eventText(event: ChannelEvent, name: (id: string | null | undefined) =>
         actor: name(event.actorId),
         name: name(event.targetId),
       })
+    case 'roleChanged':
+    case 'cloneAdded':
+    case 'cloneRemoved':
+      return tr(`channels.event.${event.event}`, {
+        actor: name(event.actorId),
+        name: event.value ?? name(event.targetId),
+      })
+    case 'guideUpdated':
+      return tr('channels.event.guideUpdated', { actor: name(event.actorId) })
     case 'left':
       return tr('team.event.left', { name: name(event.actorId) })
     case 'agentAdded':

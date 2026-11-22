@@ -122,7 +122,7 @@ export function overlapFiles(lists: { stepId: string; files: string[] }[]): NonN
  * 成员拆好的流程（task_done 的 steps，不可信）→ 草稿步骤。deps / target 用 1 开始的序号；
  * member 用名字，byName 找不到时报错，让它改了再交
  */
-export function planSteps(raw: unknown, byName: (name: string) => string | null): FlowStep[] {
+export function planSteps(raw: unknown, byName: (name: string) => string | null, suggestEffort = true): FlowStep[] {
   if (!Array.isArray(raw) || !raw.length) throw new Error('steps 要是非空数组')
   if (raw.length > FLOW_MAX_STEPS) throw new Error(`一个流程最多 ${FLOW_MAX_STEPS} 步`)
   const ref = (n: unknown): string | null =>
@@ -141,7 +141,7 @@ export function planSteps(raw: unknown, byName: (name: string) => string | null)
         kind: r.kind,
         target: ref(r.target),
         // 拟计划时建议的推理强度（不在可选范围里的丢掉）
-        settings: { effort: r.effort },
+        settings: suggestEffort ? { effort: r.effort } : undefined,
       }
     }),
   )
