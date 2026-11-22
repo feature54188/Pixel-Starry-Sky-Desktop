@@ -8,7 +8,7 @@ import {
   DEFAULT_RELAY_RULES,
   cleanRelayRules,
   relayRulesOf,
-  type AgentConfig,
+  type RosterConfig,
   type ChannelAlertRule,
   type ChannelInput,
   type ChannelNotify,
@@ -30,20 +30,7 @@ export const PRESET_MAX = 30
 export const PRESET_NAME_MAX = 40
 
 /** 成员配置快照：不存 id、会话、机器（机器由项目算），不含密钥（额度来源只有分组、账号或接口 id） */
-export type PresetMemberConfig = Pick<
-  AgentConfig,
-  | 'name'
-  | 'engine'
-  | 'projectId'
-  | 'copyId'
-  | 'settings'
-  | 'instructions'
-  | 'mode'
-  | 'tools'
-  | 'avatar'
-  | 'copyPerTask'
-  | 'sameDir'
->
+export type PresetMemberConfig = RosterConfig
 
 /** 除了 id、名字和时间，没写的字段 = 存的时候没勾，新建时用表单默认值 */
 export interface ChannelPreset {
@@ -80,14 +67,13 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : nul
 function parseMember(raw: unknown): NonNullable<ChannelPreset['members']>[number] | null {
   const m = raw as { sourceId?: unknown; config?: Partial<PresetMemberConfig> } | null
   const c = m?.config
-  if (!str(m?.sourceId) || !c || !str(c.name) || !str(c.engine) || !str(c.projectId)) return null
+  if (!str(m?.sourceId) || !c || !str(c.name) || !str(c.engine)) return null
   return {
     sourceId: m!.sourceId as string,
     config: {
       name: c.name!,
       engine: c.engine!,
-      projectId: c.projectId!,
-      copyId: str(c.copyId),
+
       settings: c.settings && typeof c.settings === 'object' ? c.settings : {},
       instructions: typeof c.instructions === 'string' ? c.instructions : '',
       mode: c.mode === 'shared' ? 'shared' : 'per-task',
@@ -194,12 +180,7 @@ export const DEFAULT_PRESET_PARTS: readonly PresetPart[] = ['members', 'dispatch
 /** 能进预设的成员：自己的、有配置的（团队里别人的成员不算） */
 export const presetableMembers = (channel: Channel, members: readonly AgentMember[]): AgentMember[] =>
   members.filter(
-    m =>
-      (channel.memberIds.includes(m.id) || channel.templateMemberIds?.includes(m.id)) &&
-      !!m.config &&
-      !m.config.cloneOf &&
-      m.mine !== false &&
-      !m.teamAgentId,
+    m => channel.memberIds.includes(m.id) && !!m.config && !m.config.cloneOf && m.mine !== false && !m.teamAgentId,
   )
 
 /** 频道 → 预设（「存为预设」和「从频道复制」共用）；parts 是要带的部分 */
@@ -211,16 +192,20 @@ export function presetFromChannel(
 ): ChannelPreset {
   const preset: ChannelPreset = { ...head }
   const picked = parts.includes('members') ? presetableMembers(channel, members) : []
-  if (parts.includes('members'))
+  if (channel.roster && parts.includes('members')) {
+    preset.members = channel.roster.map(e => ({ sourceId: e.id, config: structuredClone(e.config) }))
+    const active = new Set(members.filter(m => channel.memberIds.includes(m.id)).map(m => m.config?.cloneOf))
+    const reserves = channel.roster.filter(e => !active.has(e.id)).map(e => e.id)
+    if (reserves.length) preset.reserveIds = reserves
+  } else if (parts.includes('members'))
     preset.members = picked.map(m => {
-      const { name, engine, projectId, copyId, settings, instructions, mode, tools, avatar } = m.config!
+      const { name, engine, settings, instructions, mode, tools, avatar } = m.config!
       return {
         sourceId: m.id,
         config: {
           name,
           engine,
-          projectId,
-          copyId,
+
           settings,
           instructions,
           mode,
@@ -232,8 +217,6 @@ export function presetFromChannel(
       }
     })
   if (parts.includes('dispatch')) {
-    const reserves = picked.filter(m => !channel.memberIds.includes(m.id)).map(m => m.id)
-    if (reserves.length) preset.reserveIds = reserves
     preset.relay = channel.relay === true
     preset.relayRules = relayRulesOf(channel)
     preset.planFirst = channel.planFirst !== false
@@ -241,7 +224,8 @@ export function presetFromChannel(
     preset.leadWake = channel.leadWake !== false
     preset.leadDispatchOnly = channel.leadDispatchOnly === true
     // 牵头是带上的成员之一才有意义
-    preset.lead = picked.some(m => m.id === channel.lead) ? channel.lead : null
+    const lead = channel.roster ? members.find(m => m.id === channel.lead)?.config?.cloneOf : channel.lead
+    preset.lead = preset.members?.some(m => m.sourceId === lead) ? lead : null
   }
   if (parts.includes('notes')) preset.notes = channel.notes ?? null
   if (parts.includes('alerts')) {

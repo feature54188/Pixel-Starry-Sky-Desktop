@@ -15,6 +15,8 @@ import 'package:pixelsky_app/data/channels.dart';
 import 'package:pixelsky_app/data/team_inbox.dart';
 import 'package:pixelsky_app/demo/demo.dart';
 import 'package:pixelsky_app/platform/notifier.dart';
+import 'package:pixelsky_app/features/channels/channels_screen.dart';
+import 'package:pixelsky_app/ui/theme/theme.dart';
 
 ChannelEntry _e(String id, num at, [String status = 'done']) =>
     ChannelEntry({'id': id, 'kind': 'task', 'at': at, 'status': status});
@@ -22,7 +24,62 @@ ChannelEntry _e(String id, num at, [String status = 'done']) =>
 ChannelSummary _c(String id, num at, {bool archived = false}) =>
     ChannelSummary({'id': id, 'lastAt': at, 'archived': archived});
 
+class _RosterList extends ChannelList {
+  _RosterList(Connections connections) : super(connections, 'pc');
+
+  void renameClone(String name) {
+    channels = [
+      ChannelSummary({
+        'id': 'channel',
+        'memberIds': ['clone'],
+        'roster': [
+          {
+            'name': '开发',
+            'engine': 'codex',
+            'clones': [
+              {'id': 'clone', 'name': name, 'role': '做界面', 'lead': true},
+            ],
+          },
+          {
+            'name': '测试',
+            'engine': 'claude',
+            'model': 'sonnet',
+            'instructions': '复核',
+            'clones': [],
+          },
+        ],
+      }),
+    ];
+    notifyListeners();
+  }
+}
+
 void main() {
+  testWidgets('手机成员页显示候选，打开期间跟随电脑的分身改名', (tester) async {
+    final connections = Connections(
+      store: MemoryPairingStore(),
+      connect: (_, _) => throw StateError('unexpected connection'),
+    );
+    final list = _RosterList(connections)..renameClone('开发 2');
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildTheme(Brightness.light),
+        home: ChannelRosterScreen(channelId: 'channel', channels: list),
+      ),
+    );
+    expect(find.text('开发 2 · 牵头'), findsOneWidget);
+    expect(find.text('做界面'), findsOneWidget);
+    expect(find.text('候选（不接活）'), findsOneWidget);
+    expect(find.text('claude · sonnet · 复核'), findsOneWidget);
+    list.renameClone('前端');
+    await tester.pump();
+    expect(find.text('前端 · 牵头'), findsOneWidget);
+    expect(find.text('开发 2 · 牵头'), findsNothing);
+    await tester.pumpWidget(const SizedBox());
+    list.dispose();
+    connections.dispose();
+  });
+
   test('列表：最近的在前，归档的放最后', () {
     final list = sortChannels([
       _c('a', 1),

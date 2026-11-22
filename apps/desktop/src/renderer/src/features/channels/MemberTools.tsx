@@ -31,18 +31,18 @@ export function MemberTools({
   onChange,
 }: {
   engine: EngineId
-  projectId: string
+  projectId?: string
   value: AgentTools | null
   onChange: (next: AgentTools | null) => void
 }) {
   useI18n()
-  const local = !!projectId && machineOf(projectId) === 'local'
+  const local = projectId === undefined || (!!projectId && machineOf(projectId) === 'local')
   const [entries, setEntries] = useState<ExtensionEntry[] | null>(null)
   useEffect(() => {
     if (!local || !window.pixelsky) return
     let alive = true
     window.pixelsky.extensions
-      .state({ projectId })
+      .state(projectId ? { projectId } : null)
       .then(state => alive && setEntries(state.entries))
       .catch(() => alive && setEntries([]))
     return () => {

@@ -1811,6 +1811,21 @@ export class MobileGateway {
             archived: !!ch.archivedAt,
             lastAt: ch.lastAt ?? ch.createdAt,
             memberIds: ch.memberIds,
+            ...(ch.roster
+              ? {
+                  roster: ch.roster.map(e => ({
+                    name: e.config.name,
+                    engine: e.config.engine,
+                    model: e.config.settings.model ?? null,
+                    instructions: e.config.instructions,
+                    clones: state.members.flatMap(m =>
+                      m.kind === 'agent' && ch.memberIds.includes(m.id) && m.config?.cloneOf === e.id
+                        ? [{ id: m.id, name: m.name, role: ch.roles?.[m.id] ?? '', lead: m.id === ch.lead }]
+                        : [],
+                    ),
+                  })),
+                }
+              : {}),
             scope: ch.scope,
             teamId: ch.teamId ?? null,
             last: last && last.kind !== 'event' ? { authorId: last.authorId, text: lastPreview(last) } : null,

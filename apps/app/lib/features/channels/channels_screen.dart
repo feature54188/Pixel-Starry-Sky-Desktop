@@ -132,8 +132,8 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
         MaterialPageRoute<void>(
           builder: (_) => ChannelScreen(
             deviceId: widget.deviceId,
-            channel: ch,
-            members: list.members,
+            initialChannel: ch,
+            channels: list,
           ),
         ),
       ),
@@ -341,15 +341,95 @@ class ChannelScreen extends StatefulWidget {
   const ChannelScreen({
     super.key,
     required this.deviceId,
-    required this.channel,
-    required this.members,
+    required this.initialChannel,
+    required this.channels,
   });
   final String deviceId;
-  final ChannelSummary channel;
-  final Map<String, ChannelMember> members;
+  final ChannelSummary initialChannel;
+  final ChannelList channels;
+
+  ChannelSummary get channel =>
+      channels.channels.where((c) => c.id == initialChannel.id).firstOrNull ??
+      initialChannel;
 
   @override
   State<ChannelScreen> createState() => _ChannelScreenState();
+}
+
+class ChannelRosterScreen extends StatelessWidget {
+  const ChannelRosterScreen({
+    super.key,
+    required this.channelId,
+    required this.channels,
+  });
+  final String channelId;
+  final ChannelList channels;
+
+  @override
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: channels,
+    builder: (context, _) => _roster(context),
+  );
+
+  Widget _roster(BuildContext context) {
+    final channel = channels.channels
+        .where((c) => c.id == channelId)
+        .firstOrNull;
+    final members = channels.members;
+    final entries = objList(channel?.json['roster']);
+    final cloneIds = {
+      for (final e in entries)
+        for (final m in objList(e['clones'])) str(m['id']),
+    };
+    return AppScreen(
+      title: L('频道成员', 'Channel members'),
+      leading: RoundIconButton(
+        icon: Icons.arrow_back,
+        tooltip: L('返回', 'Back'),
+        onPressed: () => Navigator.of(context).pop(),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          for (final reserve in [false, true]) ...[
+            if (reserve && entries.any((e) => objList(e['clones']).isEmpty))
+              Text(L('候选（不接活）', 'Reserves (not assigned work)')),
+            for (final e in entries.where(
+              (e) => objList(e['clones']).isEmpty == reserve,
+            )) ...[
+              ListTile(
+                title: Text(str(e['name']) ?? ''),
+                subtitle: Text(
+                  [
+                    str(e['engine']),
+                    str(e['model']),
+                    str(e['instructions']),
+                  ].whereType<String>().where((s) => s.isNotEmpty).join(' · '),
+                ),
+              ),
+              for (final clone in objList(e['clones']))
+                Padding(
+                  padding: const EdgeInsets.only(left: 20),
+                  child: ListTile(
+                    title: Text(
+                      [
+                        str(clone['name']),
+                        if (clone['lead'] == true) L('牵头', 'Lead'),
+                      ].whereType<String>().join(' · '),
+                    ),
+                    subtitle: Text(str(clone['role']) ?? ''),
+                  ),
+                ),
+            ],
+          ],
+          for (final id in (channel?.memberIds ?? const <String>[]).where(
+            (id) => !cloneIds.contains(id),
+          ))
+            if (members[id] != null) ListTile(title: Text(members[id]!.name)),
+        ],
+      ),
+    );
+  }
 }
 
 class _ChannelScreenState extends State<ChannelScreen> {
@@ -388,9 +468,24 @@ class _ChannelScreenState extends State<ChannelScreen> {
     final c = context.colors;
     final t = _timeline!;
     return ListenableBuilder(
-      listenable: t,
+      listenable: Listenable.merge([t, widget.channels]),
       builder: (context, _) => AppScreen(
         title: widget.channel.name,
+        trailing: [
+          if (widget.channel.json['roster'] != null)
+            RoundIconButton(
+              icon: Icons.group_outlined,
+              tooltip: L('频道成员', 'Channel members'),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => ChannelRosterScreen(
+                    channelId: widget.channel.id,
+                    channels: widget.channels,
+                  ),
+                ),
+              ),
+            ),
+        ],
         subtitle: L(
           '${widget.channel.memberIds.length} 个成员',
           '${widget.channel.memberIds.length} members',
@@ -416,7 +511,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
                   for (final e in t.entries.reversed)
                     _Entry(
                       entry: e,
-                      members: widget.members,
+                      members: widget.channels.members,
                       onImage: (i) => _openImage(t, e, i),
                       onSession: (id) =>
                           openSession(context, widget.deviceId, id),
@@ -489,6 +584,10 @@ String eventText(ChannelEntry e, Map<String, ChannelMember> members) {
     'added' || 'agentAdded' => L('$actor 添加了 $target', '$actor added $target'),
     'removed' ||
     'agentRemoved' => L('$actor 移除了 $target', '$actor removed $target'),
+    'memberRenamed' => L(
+      '$actor 修改了分身名字：${e.value ?? ''}',
+      '$actor renamed a clone: ${e.value ?? ''}',
+    ),
     'roleChanged' => L(
       '$actor 更新了 ${e.value ?? target} 的频道分工',
       '$actor updated the channel assignment for ${e.value ?? target}',

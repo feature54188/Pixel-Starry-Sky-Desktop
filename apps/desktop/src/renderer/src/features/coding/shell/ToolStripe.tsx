@@ -10,6 +10,7 @@ import {
   ListTree,
   MessageSquare,
   MessagesSquare,
+  PanelsTopLeft,
   Puzzle,
   Search,
   Settings,
@@ -134,6 +135,13 @@ function LeftStripe() {
         label={tr('coding.shell.board')}
         active={page === 'board'}
         onClick={() => setPage(page === 'board' ? 'workbench' : 'board')}
+      />
+      <StripeButton
+        data="templates"
+        icon={PanelsTopLeft}
+        label={tr('channels.template.label')}
+        active={page === 'templates'}
+        onClick={() => setPage(page === 'templates' ? 'workbench' : 'templates')}
       />
       <span className="flex-1" />
       <StripeButton

@@ -800,7 +800,7 @@ describe('MobileGateway calls', () => {
         attached: { images: [{ name: 'a' }], files: [{ name: 'f.txt' }] },
       }),
       msg('m2', { threadId: 'm1' }),
-      ...['roleChanged', 'cloneAdded', 'cloneRemoved', 'guideUpdated'].map(event =>
+      ...['roleChanged', 'memberRenamed', 'cloneAdded', 'cloneRemoved', 'guideUpdated'].map(event =>
         msg(event, { kind: 'event', event, actorId: 'a1', targetId: 'deleted', value: '开发 2' }),
       ),
       {
@@ -820,7 +820,23 @@ describe('MobileGateway calls', () => {
         ({
           self: { id: 'me' },
           channels: [
-            { id: 'c1', name: '前端', topic: null, scope: 'local', memberIds: ['me', 'a1'], unread: 2, createdAt: 1 },
+            {
+              id: 'c1',
+              name: '前端',
+              topic: null,
+              scope: 'local',
+              memberIds: ['me', 'a1'],
+              unread: 2,
+              createdAt: 1,
+              roster: [
+                {
+                  id: 'dev',
+                  config: { name: '开发', engine: 'codex', settings: { model: 'fixed' }, instructions: '定位' },
+                },
+              ],
+              roles: { a1: '修复' },
+              lead: 'a1',
+            },
             { id: 'team1', name: '团队', topic: null, scope: 'team', memberIds: [], unread: 0, createdAt: 1 },
           ],
           members: [
@@ -832,7 +848,7 @@ describe('MobileGateway calls', () => {
               engine: 'codex',
               status: 'idle',
               avatar: { style: 'letter', color: '#2d6151', text: 'C' },
-              config: { secret: 1 },
+              config: { secret: 1, cloneOf: 'dev' },
             },
           ],
         }) as never,
@@ -853,6 +869,9 @@ describe('MobileGateway calls', () => {
     // 团队频道也列出来（§16.2）；这里它的一页取不到（离线），最后一条就不写
     expect(list.channels.map(c => c.id)).toEqual(['c1', 'team1'])
     expect(list.channels[0].last).toEqual({ authorId: 'me', text: '拆分登录页' })
+    expect(list.channels[0]).toMatchObject({
+      roster: [{ name: '开发', clones: [{ id: 'a1', name: 'Codex', role: '修复', lead: true }] }],
+    })
     expect(list.channels[1]).toMatchObject({ scope: 'team', last: null })
     expect(list.members[1]).toEqual({
       id: 'a1',
@@ -867,12 +886,13 @@ describe('MobileGateway calls', () => {
     expect(page.messages.map(m => m.id)).toEqual([
       'm1',
       'roleChanged',
+      'memberRenamed',
       'cloneAdded',
       'cloneRemoved',
       'guideUpdated',
       't1',
     ])
-    for (const entry of page.messages.slice(1, 5))
+    for (const entry of page.messages.slice(1, 6))
       expect(entry).toMatchObject({
         kind: 'event',
         event: entry.id,

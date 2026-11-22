@@ -36,10 +36,25 @@ export async function projectGuide(
   if (!isAbsolute(root)) throw new Error('本机默认项目缺少有效根目录')
   const directory = await realpath(root)
   const file = join(directory, 'AGENTS.md')
+  const claudeFiles = []
+  for (const name of ['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md']) {
+    try {
+      const info = await lstat(join(directory, name))
+      if (info.isFile() || info.isSymbolicLink()) claudeFiles.push(name)
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e
+    }
+  }
+  const hint = claudeFiles.length
+    ? {
+        claudeHint:
+          '项目中已有 ' + claudeFiles.join('、') + '。Claude Code 默认优先读取这些文件，由用户决定是否引用 AGENTS.md。',
+      }
+    : {}
   if (action === 'read') {
     const current = await snapshot(file)
     authorize()
-    return { content: current.content, version: current.version }
+    return { content: current.content, version: current.version, ...hint }
   }
   if (action !== 'write' || typeof content !== 'string' || !version) throw new Error('写入时需要全文和读取到的版本')
   const bytes = Buffer.from(content, 'utf8')
@@ -63,7 +78,7 @@ export async function projectGuide(
           throw new Error('项目约定已更改，请重新读取')
         authorize()
         await rename(temp, file)
-        return { version: hash(bytes) }
+        return { version: hash(bytes), ...hint }
       } finally {
         await rm(temp, { force: true })
       }

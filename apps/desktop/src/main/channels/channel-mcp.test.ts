@@ -70,13 +70,19 @@ describe('频道工具 MCP（docs/ui/channels-collab-v2.md §1）', () => {
         { tools: [] },
         { instructions: '职责' },
       ]) {
-        expect((await roster({ action: 'add_clone', name: '审查', ...extra })).isError).toBe(true)
+        for (const action of ['add', 'remove'])
+          expect((await roster({ action, name: '审查', ...extra })).isError).toBe(true)
+        if (!('instructions' in extra))
+          expect((await roster({ action: 'set_role', name: '审查', new_name: '前端', ...extra })).isError).toBe(true)
       }
       await roster({ action: 'add', name: '审查' })
       await roster({ action: 'set_role', name: '审查', instructions: '' })
+      await roster({ action: 'set_role', name: '审查', new_name: '前端' })
+      expect((await roster({ action: 'set_role', name: '审查' })).isError).toBe(true)
       expect(calls).toEqual([
-        ['roster', 's1', 'add', '审查', undefined],
-        ['roster', 's1', 'set_role', '审查', ''],
+        ['roster', 's1', 'add', '审查', undefined, undefined],
+        ['roster', 's1', 'set_role', '审查', '', undefined],
+        ['roster', 's1', 'set_role', '审查', undefined, '前端'],
       ])
       expect((await guide({ action: 'read', path: 'other' })).isError).toBe(true)
       expect((await guide({ action: 'write', content: '更新', version: 'wrong' })).isError).toBe(true)

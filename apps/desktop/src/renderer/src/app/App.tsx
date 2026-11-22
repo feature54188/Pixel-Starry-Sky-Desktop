@@ -45,6 +45,7 @@ import { WslCheckCard } from '../features/machines/WslCheckCard'
 import { WhatsNewDialog } from '../features/update/WhatsNewDialog'
 import { MachineStatus } from '../features/machines/MachineStatus'
 import { showWorkbench, usePage } from '../features/layout/page'
+import { TeamTemplatesPage } from '../features/channels/TeamTemplatesPage'
 import { ChannelsPage } from '../features/channels/ChannelsPage'
 import { TaskBoardPage } from '../features/board/TaskBoardPage'
 import { useTheme } from '../features/appearance/ThemeProvider'
@@ -129,7 +130,7 @@ export function App() {
       480,
       onWorkbench
         ? windowWidth - SESSION_MIN_WIDTH - (panelOpen ? panelWidth : 0)
-        : page === 'board'
+        : page !== 'channels'
           ? windowWidth - BOARD_MIN_WIDTH
           : windowWidth - 220 - CHANNEL_CENTER_MIN,
     ),
@@ -238,7 +239,7 @@ export function App() {
   // 窄窗口下侧边栏和右侧面板不同时打开：打开一个时如果放不下，就收起另一个
   const togglePanel = () => {
     // 任务看板没有右侧面板（docs/ui/task-board.md §2）
-    if (page === 'board') return
+    if (page === 'board' || page === 'templates') return
     // 频道页：面板开关和 Ctrl+Alt+B 开合成员面板，放不下时先收起侧栏
     if (!onWorkbench) {
       const next = !membersShown
@@ -403,6 +404,7 @@ export function App() {
                 </div>
               </div>
               {page === 'channels' && <ChannelsPage membersShown={membersShown} onToggleMembers={togglePanel} />}
+              {page === 'templates' && <TeamTemplatesPage />}
               {page === 'board' && <TaskBoardPage />}
             </div>
           </div>

@@ -51,8 +51,8 @@ class InboxScreen extends StatelessWidget {
       MaterialPageRoute<void>(
         builder: (_) => ChannelScreen(
           deviceId: deviceId,
-          channel: ch.first,
-          members: channels.members,
+          initialChannel: ch.first,
+          channels: channels,
         ),
       ),
     );

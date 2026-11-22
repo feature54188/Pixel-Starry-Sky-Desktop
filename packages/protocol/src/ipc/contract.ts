@@ -91,6 +91,7 @@ export const IPC_CONTRACT = {
   'artifacts:open': { kind: 'invoke', route: 'local', trust: 'sender' },
   'artifacts:reveal': { kind: 'invoke', route: 'local', trust: 'sender' },
   // 协作频道 Phase B（docs/ui/channels-phase-b.md §11）：频道只存在本机
+  'channels:editDefinition': { kind: 'invoke', route: 'local', trust: 'sender' },
   'channels:adjustRoster': { kind: 'invoke', route: 'local', trust: 'sender' },
   'channels:addMember': { kind: 'invoke', route: 'local', trust: 'sender' },
   'channels:attachments': { kind: 'invoke', route: 'local', trust: 'sender' },

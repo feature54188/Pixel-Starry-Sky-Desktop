@@ -18,31 +18,45 @@ const config = {
   createdAt: 1,
   sharedSessionId: 's1',
 }
+const definition = { name: '开发', engine: 'codex', mode: 'shared', settings: {}, instructions: '实现功能' }
 const snapshot = {
   self: { id: 'me', kind: 'human', name: '我', you: true },
-  channels: [],
+  channels: [{ id: 'c1', memberIds: ['clone'], roster: [{ id: 'def', config: definition }] }],
   // 团队频道里自己的成员：id 是团队成员 id，config 是本机那份
-  members: [{ id: 'ta-1', kind: 'agent', name: '前端助手', engine: 'claude', status: 'idle', mine: true, config }],
+  members: [
+    { id: 'ta-1', kind: 'agent', name: '前端助手', engine: 'claude', status: 'idle', mine: true, config },
+    { id: 'clone', kind: 'agent', name: '前端', config: { ...config, id: 'clone', name: '前端', cloneOf: 'def' } },
+  ],
   sessionChannels: {},
 }
 const saveMember = vi.fn((_channelId: string | null, _input: Record<string, unknown>) => Promise.resolve('a-local'))
+const editDefinition = vi.fn()
 vi.stubGlobal('window', {
   addEventListener: () => {},
   removeEventListener: () => {},
   dispatchEvent: () => true,
   pixelsky: {
-    channels: new Proxy({ state: () => Promise.resolve(snapshot), saveMember } as Record<string, unknown>, {
-      get: (target, key: string) =>
-        target[key] ?? (key.startsWith('on') ? () => () => {} : () => new Promise(() => {})),
-    }),
+    channels: new Proxy(
+      { state: () => Promise.resolve(snapshot), saveMember, editDefinition } as Record<string, unknown>,
+      {
+        get: (target, key: string) =>
+          target[key] ?? (key.startsWith('on') ? () => () => {} : () => new Promise(() => {})),
+      },
+    ),
   },
 })
 
 const { channelActions, getChannels } = await import('./store')
 
 describe('换头像', () => {
+  it('已改名的分身换头像时更新它的成员定义', async () => {
+    await vi.waitFor(() => expect(getChannels().channels).toHaveLength(1))
+    const avatar = { style: 'letter', color: 'blue' } as const
+    await channelActions.setAvatar('clone', avatar)
+    expect(editDefinition).toHaveBeenCalledWith('c1', 'def', { ...definition, avatar })
+  })
   it('团队频道里自己的成员：按本机成员 id 保存，不带只读字段', async () => {
-    await vi.waitFor(() => expect(getChannels().members).toHaveLength(1))
+    await vi.waitFor(() => expect(getChannels().members).toHaveLength(2))
     const avatar = { style: 'letter', color: 'blue' } as const
     await channelActions.setAvatar('ta-1', avatar)
     expect(saveMember).toHaveBeenCalledTimes(1)

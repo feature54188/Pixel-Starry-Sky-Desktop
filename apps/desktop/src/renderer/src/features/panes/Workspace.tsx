@@ -78,15 +78,15 @@ export function WorkspaceHeader({ membersShown = false, ...props }: WorkspacePro
     parsed = current ? parseFileTab(current) : null
   const showActions = useHeaderActions(sessionId)
   const page = usePage()
-  const tuiToggle = useTuiToggle(page === 'board' || page === 'channels' || parsed || file ? null : sessionId)
+  const tuiToggle = useTuiToggle(page !== 'workbench' || parsed || file ? null : sessionId)
   const channel = useChannels(selectedChannel)
   // 协作频道页沿用同一个顶栏（换组件会丢焦点）：标题是频道名，面板开关控制成员面板（docs/ui/channels.md §2）
   // 任务看板（docs/ui/task-board.md §2）：顶栏标题是「任务看板」，没有右侧面板开关
-  if (page === 'board')
+  if (page === 'board' || page === 'templates')
     return (
       <SessionHeader
         {...props}
-        title={tr('board.title')}
+        title={tr(page === 'board' ? 'board.title' : 'channels.template.label')}
         showActions={false}
         panelOpen={false}
         filesPanelOpen={false}

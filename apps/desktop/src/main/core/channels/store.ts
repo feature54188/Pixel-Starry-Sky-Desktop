@@ -12,6 +12,7 @@ import type { AgentConfig, ChannelAttachments, ChannelMessage, ChannelTask } fro
 import type { TaskRun } from './tracker'
 
 import type {
+  RosterEntry,
   ChannelAlertRule,
   ChannelNotify,
   ChannelWakeup,
@@ -28,7 +29,7 @@ export interface StoredChannel {
   projectId: string | null
   /** 'you' 和 AI 成员的 id */
   memberIds: string[]
-  templateMemberIds?: string[]
+  roster?: RosterEntry[]
   /** 频道说明：每次派活都带上（docs/ui/channels-local-ai.md §3.1 #9）；旧数据没有 */
   notes?: string | null
   /** 置顶的消息 id（先后顺序），派活时作为资料带上；旧数据没有 */
@@ -129,6 +130,13 @@ export class ChannelStore {
 
   async init(): Promise<void> {
     await mkdir(this.dir, { recursive: true })
+    const pending = await this.readJson<{ channel: StoredChannel; members: AgentConfig[] } | null>(
+      join(this.dir, 'roster-update.json'),
+      null,
+    )
+    if (pending && ID.test(pending.channel.id)) {
+      await this.finishRosterUpdate(pending.channel, pending.members)
+    }
     this.members = await this.readJson<AgentConfig[]>(join(this.dir, 'members.json'), [])
     this.teammate = cleanTeammate(await this.readJson<unknown>(join(this.dir, 'teammate.json'), null))
     for (const run of await this.readJson<TaskRun[]>(join(this.dir, 'runs.json'), [])) this.runs.set(run.taskId, run)
@@ -186,10 +194,28 @@ export class ChannelStore {
   }
 
   private atomic(file: string, data: unknown): Promise<void> {
+    return this.write(() => this.replace(file, data))
+  }
+
+  private async replace(file: string, data: unknown): Promise<void> {
+    const temp = `${file}.${randomUUID()}.tmp`
+    await writeFile(temp, typeof data === 'string' ? data : JSON.stringify(data, null, 2), 'utf8')
+    await rename(temp, file)
+  }
+
+  private async finishRosterUpdate(channel: StoredChannel, members: AgentConfig[]) {
+    await this.replace(join(this.dir, 'members.json'), members)
+    await this.replace(join(this.dir, channel.id, 'channel.json'), channel)
+    await rm(join(this.dir, 'roster-update.json'), { force: true })
+  }
+
+  /** 两个文件共享一次提交。退出发生在替换中途时，启动先补完记录。 */
+  saveRoster(channel: StoredChannel, members: AgentConfig[]): Promise<void> {
+    this.channels.set(channel.id, channel)
+    this.members = members
     return this.write(async () => {
-      const temp = `${file}.${randomUUID()}.tmp`
-      await writeFile(temp, typeof data === 'string' ? data : JSON.stringify(data, null, 2), 'utf8')
-      await rename(temp, file)
+      await this.replace(join(this.dir, 'roster-update.json'), { channel, members })
+      await this.finishRosterUpdate(channel, members)
     })
   }
 

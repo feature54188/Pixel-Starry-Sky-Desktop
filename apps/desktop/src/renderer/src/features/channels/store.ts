@@ -670,6 +670,17 @@ export const channelActions = {
       return
     }
     if (!member.config) throw new Error(tr('channels.error.memberMissing'))
+    const definitionId = member.config.cloneOf
+    if (definitionId) {
+      const channel = state.channels.find(
+        c => c.memberIds.includes(memberId) && c.roster?.some(e => e.id === definitionId),
+      )
+      const entry = channel?.roster?.find(e => e.id === definitionId)
+      if (channel && entry) {
+        await channelsBridge.editDefinition(channel.id, entry.id, { ...entry.config, avatar })
+        return
+      }
+    }
     const { createdAt: _c, sharedSessionId: _s, machineId: _m, ...config } = member.config
     // 团队频道里自己的成员：member.id 是团队成员 id，本机成员 id 在 config 里
     await channelsBridge.saveMember(null, { ...config, avatar })
@@ -690,14 +701,23 @@ export const channelActions = {
     if (!channelsBridge) return Promise.resolve()
     return channelsBridge.leaveSession(sessionId, channelId)
   },
+  async editDefinition(
+    channelId: string,
+    id: string,
+    config: import('../../../../shared/types/channels').RosterConfig | null,
+  ): Promise<void> {
+    if (!channelsBridge) throw new Error(tr('channels.template.desktopOnly'))
+    await channelsBridge.editDefinition(channelId, id, config)
+  },
   async adjustRoster(
     channelId: string,
     memberId: string,
     action: 'add' | 'remove' | 'set_role',
     role?: string,
+    newName?: string,
   ): Promise<string> {
     if (!channelsBridge) throw new Error(tr('channels.template.desktopOnly'))
-    return channelsBridge.adjustRoster(channelId, memberId, action, role)
+    return channelsBridge.adjustRoster(channelId, memberId, action, role, newName)
   },
   addMember(channelId: string, memberId: string): Promise<void> {
     return channelsBridge ? channelsBridge.addMember(channelId, memberId) : demo.addMember(channelId, memberId)

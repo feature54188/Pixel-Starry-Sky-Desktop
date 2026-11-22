@@ -29,8 +29,7 @@ import type { AgentMember, Channel, ChannelMember } from '@/data/types'
 import type { PendingInvite, TeamInfo } from '../../../../shared/types/channels'
 import { channelActions, channelsLive, selfMember, useChannels } from './store'
 import { useNeeds } from './needs'
-import { ManagePresetsDialog, SavePresetDialog } from './ChannelPresets'
-import { ProjectTeam } from './ProjectTeam'
+import { SavePresetDialog } from './ChannelPresets'
 import { MemberAvatar } from './ChannelMessage'
 import { channelLoad, memberLoad } from './model'
 import { ChannelDialog } from './ChannelDialogs'
@@ -466,7 +465,6 @@ export function ChannelList({
     | { kind: 'leave'; team: TeamInfo }
     | { kind: 'editChannel'; channel: Channel }
     | { kind: 'savePreset'; channel: Channel }
-    | { kind: 'templates' }
     | { kind: 'deleteChannel'; channel: Channel }
     | null
   >(null)
@@ -568,7 +566,6 @@ export function ChannelList({
           />
         </label>
         <NeedsEntry />
-        {channelsLive && <ProjectTeam manage={() => setDialog({ kind: 'templates' })} />}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2 [scrollbar-width:thin]">
         {teamUi && invites.map(invite => <InviteCard key={invite.id} invite={invite} />)}
@@ -728,7 +725,7 @@ export function ChannelList({
         <ChannelDialog channel={null} agents={agents} teamId={dialog.teamId} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === 'savePreset' && <SavePresetDialog channel={dialog.channel} onClose={() => setDialog(null)} />}
-      {dialog?.kind === 'templates' && <ManagePresetsDialog onClose={() => setDialog(null)} />}
+
       {dialog?.kind === 'editChannel' && (
         <ChannelDialog channel={dialog.channel} agents={[]} onClose={() => setDialog(null)} />
       )}

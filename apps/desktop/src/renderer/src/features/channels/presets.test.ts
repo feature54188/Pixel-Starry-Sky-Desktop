@@ -74,6 +74,16 @@ describe('parsePresets', () => {
     expect(state.defaultId).toBeNull()
     expect(state.items).toEqual([{ id: 'a', name: 'A', updatedAt: 0, members: [] }])
   })
+  it('无项目也能保存成员；旧模板读入时去掉成员原来的项目和副本', () => {
+    const snapshot = presetFromChannel(channel(), [agent('a')], head)
+    expect(snapshot.members?.[0].config).not.toHaveProperty('projectId')
+    const old = {
+      ...snapshot,
+      members: [{ sourceId: 'a', config: { ...snapshot.members![0].config, projectId: 'old', copyId: 'old-copy' } }],
+    }
+    expect(parsePresets(JSON.stringify({ items: [old] })).items).toEqual([snapshot])
+    expect(parsePresets(JSON.stringify({ items: [snapshot] })).items).toEqual([snapshot])
+  })
   it('存下去再读回来不变', () => {
     const preset = presetFromChannel(channel({ lead: 'a', relay: true }), [agent('a')], head)
     const text = JSON.stringify(withPreset({ defaultId: null, items: [] }, preset, true))
@@ -94,6 +104,24 @@ describe('withPreset / withoutPreset', () => {
 })
 
 describe('presetFromChannel', () => {
+  it('成员表按定义保存，记录候选和牵头所属项', () => {
+    const entries = [
+      { id: 'x', config: config('开发') },
+      { id: 'y', config: config('审查') },
+    ]
+    const saved = presetFromChannel(
+      channel({ roster: entries, memberIds: ['a', 'b'], lead: 'b', roles: { a: '前端工作' } }),
+      [
+        agent('a', { config: { ...config('前端'), cloneOf: 'x' } }),
+        agent('b', { config: { ...config('后端'), cloneOf: 'x' } }),
+      ],
+      head,
+    )
+    expect(saved.members?.map(m => m.config.name)).toEqual(['开发', '审查'])
+    expect(saved.reserveIds).toEqual(['y'])
+    expect(saved.lead).toBe('x')
+    expect(JSON.stringify(saved)).not.toContain('前端工作')
+  })
   it('成员不带 id、会话和绑定，也不带机器', () => {
     const { members } = presetFromChannel(channel(), [agent('a')], head)
     expect(members?.[0].sourceId).toBe('a')

@@ -20,7 +20,7 @@ import { channelActions, useChannels } from './store'
 import { duplicateName, engineResetFields, matchAgents, scheduleToInput } from './model'
 import { RelayRulesEditor } from './RelayRules'
 import { AlertRulesEditor } from './AlertRules'
-import { CopyFromChannel, ManagePresetsDialog, PresetChooser, PresetSummary } from './ChannelPresets'
+import { CopyFromChannel, PresetSummary } from './ChannelPresets'
 import {
   COPY_SOURCE,
   createFromForm,
@@ -29,10 +29,9 @@ import {
   planPresetMembers,
   presetFromChannel,
   projectAfterSwitch,
-  refreshSource,
   sameForm,
-  usePresets,
   type ChannelPreset,
+  type PresetMemberConfig,
   type PresetForm,
   type PresetSource,
 } from './presets'
@@ -179,7 +178,7 @@ const MEMBER_SEARCH_MIN = 8
 /** 新建频道（channel 为空）或编辑频道的名字、主题、默认项目 */
 export function ChannelDialog({
   channel,
-  agents,
+  agents: allAgents,
   teamId,
   onClose,
 }: {
@@ -199,16 +198,11 @@ export function ChannelDialog({
   })
   const inTeam = !!teamId || channel?.scope === 'team'
   const creating = !channel && !inTeam
-  // 频道预设（docs/ui/channel-presets.md）：打开新建时选中默认预设
-  const presets = usePresets()
-  const [source, setSource] = useState<PresetSource | null>(() => {
-    const preset = creating ? presets.items.find(p => p.id === presets.defaultId) : undefined
-    return preset ? { id: preset.id, name: preset.name, preset } : null
-  })
+  const agents = allAgents.filter(m => !m.config?.cloneOf)
+  const [source, setSource] = useState<PresetSource | null>(null)
   const [pending, setPending] = useState<PresetSource | null | undefined>(undefined)
   const [expanded, setExpanded] = useState(false)
   const [copying, setCopying] = useState(false)
-  const [managing, setManaging] = useState(false)
   const copyable = useChannels(s => s.channels).filter(c => c.scope === 'local')
   // 表单的基准：选了预设就是预设的值，只选预设不算改动
   const [base, setBase] = useState<PresetForm>(() =>
@@ -306,19 +300,7 @@ export function ChannelDialog({
     if (changed) setPending(next)
     else applySource(next)
   }
-  const pickPreset = (id: string | null): void => {
-    const preset = id ? presets.items.find(p => p.id === id) : undefined
-    pickSource(preset ? { id: preset.id, name: preset.name, preset } : null)
-  }
   const deletedMembers = source ? planPresetMembers(source.preset, agents).deleted : []
-  // 管理预设回来：选中的预设删除了就回到空白，改名了跟着改（表单里的修改留着）
-  const closeManage = (): void => {
-    setManaging(false)
-    if (!source) return
-    const next = refreshSource(source, presets.items)
-    if (next) setSource(next)
-    else applySource(null)
-  }
   // 牵头被取消勾选时下拉框显示「不启用」；再勾回来还是它
   const leadShown = leadOptions.some(m => m.id === lead) ? lead : ''
   const showForm = !source || expanded
@@ -364,10 +346,8 @@ export function ChannelDialog({
       setBusy(false)
     })
   }
-  if (managing) return <ManagePresetsDialog onClose={closeManage} />
   return (
     <ConfirmDialog
-      wide={creating && presets.items.length > 0}
       title={tr(channel ? 'channels.dialog.editTitle' : 'channels.dialog.newTitle')}
       confirmLabel={tr(channel ? 'channels.dialog.save' : 'channels.dialog.create')}
       cancelLabel={tr('channels.dialog.cancel')}
@@ -386,14 +366,14 @@ export function ChannelDialog({
             submit()
           }}
         >
-          {creating && (
-            <PresetChooser
-              active={source?.id ?? null}
-              canCopy={copyable.length > 0}
-              onPick={pickPreset}
-              onCopy={() => setCopying(on => !on)}
-              onManage={() => setManaging(true)}
-            />
+          {creating && copyable.length > 0 && (
+            <button
+              type="button"
+              className="self-start text-meta text-accent-fg hover:underline"
+              onClick={() => setCopying(!copying)}
+            >
+              {tr('channels.preset.copy')}
+            </button>
           )}
           {pending !== undefined && (
             <div
@@ -714,12 +694,18 @@ function useCopies(projectId: string): WorkspaceChoice[] {
  */
 export function AgentDialog({
   channel,
+  template,
   editing,
   from,
   others,
   onClose,
 }: {
-  channel: Channel
+  channel?: Channel
+  template?: {
+    config?: PresetMemberConfig
+    names: string[]
+    save: (config: PresetMemberConfig) => void | Promise<void>
+  }
   editing: AgentConfig | null
   /** 复制这个成员（docs/ui/channel-member-row.md §3）：新建，设置都先填成它的；绑定的会话不带 */
   from?: AgentConfig
@@ -732,12 +718,13 @@ export function AgentDialog({
   const currentProject = useEngineState(s => s.currentProjectId)
   const projectOptions = useProjectOptions()
   // Dot 只能在 ChatGPT 里聊天、不在项目里干活，不当频道 AI 成员的引擎
-  const ready = engines.filter(e => e.status === 'ready' && e.id !== 'dot')
+  const ready = engines.filter(e => (template || e.status === 'ready') && e.id !== 'dot')
   const allMembers = useChannels(s => s.members)
-  const seed = editing ?? from ?? null
+  const seed = template?.config ?? editing ?? from ?? null
   // 打开时的名字和职责：关弹窗前用它判断改没改过
   const [initial] = useState(() => ({
     name:
+      template?.config?.name ??
       editing?.name ??
       (from
         ? duplicateName(
@@ -757,9 +744,9 @@ export function AgentDialog({
     effort: Effort | ''
   } | null>(null)
   const [engine, setEngine] = useState<EngineId>(seed?.engine ?? ready[0]?.id ?? 'claude')
-  const firstProject = channel.projectId ?? currentProject ?? projectOptions.find(o => !o.disabled)?.value ?? ''
-  const [projectId, setProjectId] = useState(seed?.projectId ?? firstProject)
-  const [copyId, setCopyId] = useState<string>(seed?.copyId ?? '')
+  const firstProject = channel?.projectId ?? currentProject ?? projectOptions.find(o => !o.disabled)?.value ?? ''
+  const [projectId, setProjectId] = useState(template ? '' : (editing?.projectId ?? from?.projectId ?? firstProject))
+  const [copyId, setCopyId] = useState<string>(editing?.copyId ?? from?.copyId ?? '')
   const [copyPerTask, setCopyPerTask] = useState(seed?.copyPerTask === true)
   // 同一目录有活在做时（docs/multica-learn.md §11.2）
   const [sameDir, setSameDir] = useState<SameDirPolicy>(seed?.sameDir ?? 'queue')
@@ -916,7 +903,9 @@ export function AgentDialog({
     groupId,
     ownModels,
     sourceCtx,
-    names: allMembers.filter(m => m.kind === 'agent' && m.mine !== false && !m.teamAgentId).map(m => m.name),
+    names:
+      template?.names ??
+      allMembers.filter(m => m.kind === 'agent' && m.mine !== false && !m.teamAgentId).map(m => m.name),
   })
   const applyAi = (draft: AiMemberDraft): number => {
     const { values: v, fields } = applyDraft(draft, draftCtx())
@@ -947,7 +936,10 @@ export function AgentDialog({
     return count
   }
   const canSave =
-    !!name.trim() && !!projectId && (ready.some(e => e.id === engine) || !!editing) && (source === 'self' || !!model)
+    !!name.trim() &&
+    (!!template || !!projectId) &&
+    (ready.some(e => e.id === engine) || !!editing || !!template) &&
+    (source === 'self' || !!model)
 
   const run = (fn: () => Promise<unknown>) => {
     if (busy) return
@@ -962,12 +954,9 @@ export function AgentDialog({
     if (!canSave) return
     // async：来源不能用时 settingsForSource 抛的错也走 run 的错误提示
     run(async () => {
-      await channelActions.saveMember(editing ? null : channel.id, {
-        ...(editing ? { id: editing.id } : {}),
-        name,
+      const config: PresetMemberConfig = {
+        name: name.trim(),
         engine,
-        projectId,
-        copyId: copyId || null,
         settings: {
           ...settingsForSource(engine, source, model, sourceCtx, routeId),
           ...(effortValue ? { effort: effortValue } : {}),
@@ -979,11 +968,22 @@ export function AgentDialog({
         mode,
         tools,
         // 编辑、复制沿用原来的头像；新建按名字给一个默认的
-        avatar: seed ? (seed.avatar ?? null) : defaultAvatar(name.replace(/\s+/g, ' ').trim()),
+        avatar: seed ? seed.avatar : defaultAvatar(name.replace(/\s+/g, ' ').trim()),
         ...(copyPerTask && mode === 'per-task' && !copyId && machineOf(projectId) === 'local'
           ? { copyPerTask: true }
           : {}),
         ...(sameDir !== 'queue' ? { sameDir } : {}),
+      }
+      if (template) {
+        await template.save(config)
+        return
+      }
+      if (!channel) throw new Error(tr('channels.error.memberMissing'))
+      await channelActions.saveMember(editing ? null : channel.id, {
+        ...config,
+        projectId,
+        copyId: copyId || null,
+        ...(editing ? { id: editing.id } : {}),
       })
       // 存好设置再改由谁接：换成别的引擎的不再由执行机接
       const wantRunner = runnerChoice && runnerEngine && !!runner
@@ -996,8 +996,12 @@ export function AgentDialog({
 
   return (
     <ConfirmDialog
-      title={editing ? tr('channels.agent.editTitle', { name: editing.name }) : tr('channels.agent.addTitle')}
-      confirmLabel={tr(editing ? 'channels.dialog.save' : 'channels.agent.add')}
+      title={
+        template?.config || editing
+          ? tr('channels.agent.editTitle', { name: seed!.name })
+          : tr('channels.agent.addTitle')
+      }
+      confirmLabel={tr(editing || template?.config ? 'channels.dialog.save' : 'channels.agent.add')}
       cancelLabel={tr('channels.dialog.cancel')}
       busy={busy}
       error={error}
@@ -1013,7 +1017,7 @@ export function AgentDialog({
               {tr('channels.agent.copiedFrom', { name: from.name })}
             </p>
           )}
-          {!editing && !from && others.length > 0 && (
+          {channel && !editing && !from && others.length > 0 && (
             <section className="flex flex-col gap-1">
               <h4 className="text-meta font-medium text-fg-muted">{tr('channels.agent.existing')}</h4>
               {others.map(a => (
@@ -1035,7 +1039,7 @@ export function AgentDialog({
               </h4>
             </section>
           )}
-          {!editing && !from && (
+          {!template?.config && !editing && !from && (
             <MemberQuickFill
               context={() => memberDraftContext(draftCtx(), PROMPT_CONTEXT_LIMIT)}
               apply={applyAi}
@@ -1110,35 +1114,37 @@ export function AgentDialog({
               )}
               <AiFilled field={tr('channels.agent.engine')} reason={ai.engine} />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <span className="text-meta font-medium text-fg-muted">{tr('channels.agent.project')}</span>
-              {projectOptions.length ? (
-                <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
-                  <Select
-                    label={tr('channels.agent.project')}
-                    value={projectId}
-                    options={projectOptions}
-                    onChange={v => {
-                      setProjectId(v)
-                      setCopyId('')
-                    }}
-                  />
-                  <Select
-                    label={tr('channels.agent.mainTree')}
-                    value={copyId}
-                    options={[
-                      { value: '', label: tr('channels.agent.mainTree') },
-                      ...copies
-                        .filter(c => c.copyId)
-                        .map(c => ({ value: c.copyId!, label: c.name, hint: c.branch ?? undefined })),
-                    ]}
-                    onChange={setCopyId}
-                  />
-                </div>
-              ) : (
-                <p className="text-meta text-warn">{tr('channels.agent.noProjects')}</p>
-              )}
-            </div>
+            {!template && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-meta font-medium text-fg-muted">{tr('channels.agent.project')}</span>
+                {projectOptions.length ? (
+                  <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
+                    <Select
+                      label={tr('channels.agent.project')}
+                      value={projectId}
+                      options={projectOptions}
+                      onChange={v => {
+                        setProjectId(v)
+                        setCopyId('')
+                      }}
+                    />
+                    <Select
+                      label={tr('channels.agent.mainTree')}
+                      value={copyId}
+                      options={[
+                        { value: '', label: tr('channels.agent.mainTree') },
+                        ...copies
+                          .filter(c => c.copyId)
+                          .map(c => ({ value: c.copyId!, label: c.name, hint: c.branch ?? undefined })),
+                      ]}
+                      onChange={setCopyId}
+                    />
+                  </div>
+                ) : (
+                  <p className="text-meta text-warn">{tr('channels.agent.noProjects')}</p>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)] gap-2">
               <div className="flex min-w-0 flex-col gap-1.5">
                 <span className="text-meta font-medium text-fg-muted">{tr('channels.agent.source')}</span>
@@ -1367,7 +1373,12 @@ export function AgentDialog({
               </div>
             )}
             {!editing?.bound && (
-              <MemberTools engine={engine} projectId={projectId} value={tools ?? null} onChange={setTools} />
+              <MemberTools
+                engine={engine}
+                projectId={template ? undefined : projectId}
+                value={tools ?? null}
+                onChange={setTools}
+              />
             )}
             <button type="submit" hidden />
           </form>

@@ -266,7 +266,7 @@ export type ChannelMember = HumanMember | AgentMember
 export interface Channel {
   roles?: Record<string, string>
   /** 可由牵头引入本频道的项目成员（已根据用户模板创建）。 */
-  templateMemberIds?: string[]
+  roster?: RosterEntry[]
   id: string
   name: string
   topic: string | null
@@ -937,6 +937,7 @@ export interface ChannelEvent extends ChannelMessageBase {
   kind: 'event'
   event:
     | 'roleChanged'
+    | 'memberRenamed'
     | 'cloneAdded'
     | 'cloneRemoved'
     | 'guideUpdated'
@@ -1148,14 +1149,20 @@ export interface ChannelInput {
   teamId?: string | null
 }
 
+export type RosterConfig = Pick<
+  AgentInput,
+  'name' | 'engine' | 'settings' | 'instructions' | 'mode' | 'tools' | 'avatar' | 'sameDir' | 'copyPerTask'
+>
+export interface RosterEntry {
+  id: string
+  config: RosterConfig
+}
+
 export interface ProjectChannelTemplate {
   reserveIds?: string[]
   members: {
     sourceId: string
-    config: Pick<
-      AgentInput,
-      'name' | 'engine' | 'settings' | 'instructions' | 'mode' | 'tools' | 'avatar' | 'sameDir' | 'copyPerTask'
-    >
+    config: RosterConfig
   }[]
   lead?: string | null
   notes?: string | null

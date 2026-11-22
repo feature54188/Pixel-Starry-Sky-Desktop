@@ -1,3 +1,4 @@
+import { PanelsTopLeft } from 'lucide-react'
 import { useI18n } from '@/i18n/I18nProvider'
 import { tr } from '@/i18n/core'
 import { CountBadge, useComingSoon } from '@/ui'
@@ -87,6 +88,7 @@ export function SidebarNav({
 }) {
   useI18n()
   const comingSoon = useComingSoon()
+  const page = usePage()
   const openSearch = useOpenSearch()
   const { icons } = useSidebarPrefs()
   const NewTaskIcon = getSidebarIcon('newTask', icons)
@@ -110,6 +112,14 @@ export function SidebarNav({
       </SidebarRow>
       <BoardEntry />
       <ChannelsEntry />
+      <SidebarRow
+        selected={page === 'templates'}
+        onClick={() => setPage('templates')}
+        aria-current={page === 'templates' ? 'page' : undefined}
+      >
+        <PanelsTopLeft size={16} strokeWidth={1.5} className="shrink-0 text-fg-muted" />
+        <span className="min-w-0 flex-1 truncate">{tr('channels.template.label')}</span>
+      </SidebarRow>
       <DotNavGroup selectedSessionId={selectedSessionId} />
     </nav>
   )

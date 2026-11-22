@@ -260,8 +260,8 @@ function deliveryFallback(locale: Locale): string {
 
 function leadToolsText(locale: Locale): string {
   return en(locale)
-    ? 'Once the user states a requirement, use channel_roster to review member capabilities, adjust assignments and add or remove clones. Wait for a clear request before adjusting the team. Use project_guide for project agreements in AGENTS.md.'
-    : '你是本频道的牵头。用户说明需求后，可用 channel_roster 查看成员特点、调整本频道分工或增减分身。没有明确需求时不要调整。项目约定用 project_guide 写入 AGENTS.md。'
+    ? 'Once the user states a requirement, use channel_roster to review member capabilities, add clones by definition, remove them by clone name, and change a clone’s name or channel assignment. Wait for a clear request before adjusting the team. Use project_guide for project agreements in AGENTS.md.'
+    : '你是本频道的牵头。用户说明需求后，可用 channel_roster 查看成员特点、按定义新增分身，按分身名字移除、改名或调整本频道分工。没有明确需求时不要调整。项目约定用 project_guide 写入 AGENTS.md。'
 }
 
 function toolsText(tools: { relay: boolean; lead?: boolean }, locale: Locale): string {

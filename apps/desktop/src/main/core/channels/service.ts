@@ -29,6 +29,8 @@ import {
 import type { Locale } from '../../../shared/i18n/messages'
 import type {
   AgentConfig,
+  RosterConfig,
+  RosterEntry,
   ChannelAgentLoad,
   ChannelAttachedMeta,
   ChannelGenerated,
@@ -224,24 +226,20 @@ const NAME_MAX = 40
 export const CHANNEL_AGENT_MAX = 20
 
 function checkCapacity(count: number): void {
-  if (count > CHANNEL_AGENT_MAX) throw new Error(`频道最多有 ${CHANNEL_AGENT_MAX} 个 AI 成员（含候选和分身）`)
+  if (count > CHANNEL_AGENT_MAX) throw new Error(`频道最多有 ${CHANNEL_AGENT_MAX} 个在岗 AI 成员`)
 }
 
-function rosterIds(c: StoredChannel): Set<string> {
-  const ids = new Set([...c.memberIds, ...(c.templateMemberIds ?? [])])
+function activeIds(c: StoredChannel): Set<string> {
+  const ids = new Set(c.memberIds)
   ids.delete(SELF_ID)
   return ids
 }
-function withoutMembers(c: StoredChannel, removed: Set<string>, keepCandidates = false): StoredChannel {
+function withoutMembers(c: StoredChannel, removed: Set<string>): StoredChannel {
   const roles = { ...c.roles }
   for (const id of removed) delete roles[id]
-  const templateMemberIds = keepCandidates
-    ? [...new Set([...(c.templateMemberIds ?? []), ...removed])]
-    : c.templateMemberIds?.filter(id => !removed.has(id))
   return {
     ...c,
     roles,
-    templateMemberIds,
     memberIds: c.memberIds.filter(id => !removed.has(id)),
     lead: c.lead && removed.has(c.lead) ? null : c.lead,
   }
@@ -731,7 +729,7 @@ export class Channels {
         scope: 'local' as const,
         memberIds: c.memberIds,
         roles: c.roles ?? {},
-        ...(c.templateMemberIds ? { templateMemberIds: c.templateMemberIds } : {}),
+        ...(c.roster ? { roster: c.roster } : {}),
         createdAt: c.createdAt,
         load: this.loadOf(c.id),
         ...this.unreadOf(c),
@@ -1049,36 +1047,26 @@ export class Channels {
       if (!channel.projectId || !this.deps.projects().some(p => p.id === channel.projectId))
         throw new Error('请选择目标项目')
       if (!Array.isArray(t.members)) throw new Error('频道模板的成员列表无效')
-      checkCapacity(t.members.length)
-      const mapped = new Map<string, string>()
+      const reserves = new Set(t.reserveIds ?? [])
+      checkCapacity(t.members.filter(m => !reserves.has(m.sourceId) || m.sourceId === t.lead).length)
+      const entries = new Map<string, RosterEntry>()
+      channel.roster = []
+      for (const { sourceId, config } of t.members) {
+        if (!sourceId || entries.has(sourceId)) throw new Error('模板成员标识重复或为空')
+        const entry = this.makeEntry(channel, config)
+        entries.set(sourceId, entry)
+        channel.roster.push(entry)
+      }
       const copies: AgentConfig[] = []
       const taken = new Set(this.store.members.map(m => m.name.toLowerCase()))
-      for (const { sourceId, config } of t.members) {
-        if (!sourceId || mapped.has(sourceId)) throw new Error('模板成员标识重复或为空')
-        const base = cleanName(config.name, '成员名')
-        let name = base
-        for (let n = 2; taken.has(name.toLowerCase()); n++) {
-          const suffix = ' ' + n
-          name = base.slice(0, NAME_MAX - suffix.length).trimEnd() + suffix
-        }
-        const copy = this.buildMemberConfig({
-          ...config,
-          id: undefined,
-          name,
-          projectId: channel.projectId,
-          copyId: null,
-        })
-        taken.add(name.toLowerCase())
-        copies.push(copy)
-        mapped.set(sourceId, copy.id)
+      for (const [sourceId, entry] of entries) {
+        if (reserves.has(sourceId) && sourceId !== t.lead) continue
+        const clone = this.makeClone(channel, entry, taken)
+        copies.push(clone)
+        taken.add(clone.name.toLowerCase())
+        if (sourceId === t.lead) channel.lead = clone.id
       }
-      const reserves = new Set(t.reserveIds ?? [])
-      channel.templateMemberIds = copies.map(m => m.id)
-      channel.memberIds = [
-        SELF_ID,
-        ...[...mapped].filter(([key]) => !reserves.has(key) || key === t.lead).map(([, id]) => id),
-      ]
-      channel.lead = t.lead ? (mapped.get(t.lead) ?? null) : null
+      channel.memberIds = [SELF_ID, ...copies.map(m => m.id)]
       if (t.lead && !copies.some(m => m.id === channel.lead && m.machineId === 'local'))
         throw new Error('模板牵头需要本机项目及有效的 AI 成员')
       channel.notes = typeof t.notes === 'string' ? t.notes.trim().slice(0, NOTES_MAX) || null : null
@@ -1263,11 +1251,11 @@ export class Channels {
   // 成员
   // -------------------------------------------------------------------------
 
-  private buildMemberConfig(raw: AgentInput, existing?: AgentConfig): AgentConfig {
+  private buildMemberConfig(raw: AgentInput, existing?: AgentConfig, definition = false): AgentConfig {
     const name = cleanName(raw?.name, '成员名')
     if (!ENGINES.has(raw.engine)) throw new Error('不支持的引擎')
     if (typeof raw.projectId !== 'string' || !raw.projectId) throw new Error('请选择工作目录')
-    if (this.store.members.some(m => m.id !== raw.id && m.name.toLowerCase() === name.toLowerCase()))
+    if (!definition && this.store.members.some(m => m.id !== raw.id && m.name.toLowerCase() === name.toLowerCase()))
       throw new Error('已经有同名的 AI 成员')
     const project = this.deps.projects().find(p => p.id === raw.projectId)
     if (!project) throw new Error('项目不存在')
@@ -1318,13 +1306,19 @@ export class Channels {
   /** 新建或编辑 AI 成员；带 channelId 时顺便加进这个频道 */
   async saveMember(channelId: string | null, raw: AgentInput): Promise<string> {
     const existing = raw?.id ? this.member(raw.id) : undefined
+    const into = channelId ? this.store.channels.get(channelId) : undefined
+    if (into?.roster && !raw.id) return this.addDefinition(into, raw)
+    if (
+      existing?.cloneOf &&
+      [...this.store.channels.values()].some(c => c.roster?.some(e => e.id === existing.cloneOf))
+    )
+      throw new Error('请编辑成员表里的配置')
     const config = this.buildMemberConfig(raw, existing)
     const settings = config.settings
-    const into = channelId ? this.store.channels.get(channelId) : undefined
     if (into && !into.memberIds.includes(config.id)) {
       this.writable(into.id)
       if (config.cloneOf) throw new Error('分身只属于创建它的频道')
-      checkCapacity(rosterIds(into).add(config.id).size)
+      checkCapacity(activeIds(into).add(config.id).size)
     }
     this.store.members = existing
       ? this.store.members.map(m => (m.id === config.id ? config : m))
@@ -1350,22 +1344,26 @@ export class Channels {
       return this.registerAgent(info, channelId, memberId, 'approve')
     }
     const c = this.channel(channelId)
-    if (!this.member(memberId)) throw new Error('成员不存在')
+    const member = this.member(memberId)
+    if (!member) throw new Error('成员不存在')
     if (c.memberIds.includes(memberId)) return
     this.writable(channelId)
     if (this.member(memberId)?.cloneOf) throw new Error('分身只属于创建它的频道')
-    checkCapacity(rosterIds(c).add(memberId).size)
+    if (c.roster && !member.bound) {
+      await this.addDefinition(c, member)
+      return
+    }
+    checkCapacity(activeIds(c).add(memberId).size)
     await this.store.saveChannel({
       ...c,
       memberIds: [...c.memberIds, memberId],
-      ...(c.templateMemberIds ? { templateMemberIds: [...new Set([...c.templateMemberIds, memberId])] } : {}),
     })
     this.event(channelId, 'added', { targetId: memberId }, actorId)
     this.changed()
   }
 
   /** 从频道移除：已经发出去的活照常做完、结果照常发回；还在排队的取消 */
-  async removeMember(channelId: string, memberId: string, keepInTemplate = false, actorId = SELF_ID): Promise<void> {
+  async removeMember(channelId: string, memberId: string, actorId = SELF_ID): Promise<void> {
     const info = this.team?.channelInfo(channelId)
     if (info) {
       const agent = this.team!.agentById(memberId)
@@ -1379,12 +1377,11 @@ export class Channels {
     }
     const c = this.writable(channelId)
     if (!c.memberIds.includes(memberId) || memberId === SELF_ID) return
-    if (this.member(memberId)?.cloneOf) {
-      await this.adjustRoster(channelId, memberId, 'remove', undefined, actorId)
+    if (c.roster?.some(e => e.id === this.member(memberId)?.cloneOf)) {
+      await this.adjustRoster(channelId, memberId, 'remove', undefined, undefined, actorId)
       return
     }
-    if (c.memberIds.some(id => this.member(id)?.cloneOf === memberId)) throw new Error('请先撤下该成员的分身')
-    await this.store.saveChannel(withoutMembers(c, new Set([memberId]), keepInTemplate))
+    await this.store.saveChannel(withoutMembers(c, new Set([memberId])))
     for (const run of [...this.store.runs.values()])
       if (run.channelId === channelId && run.memberId === memberId && run.phase === 'waiting')
         this.finish(run, { status: 'stopped', note: 'cancelled' })
@@ -1416,6 +1413,13 @@ export class Channels {
   /** 全局删除成员：有没做完的活、还在没结束的流程里时不让删 */
   async deleteMember(memberId: string): Promise<void> {
     if (!this.member(memberId)) return
+    const owner = [...this.store.channels.values()].find(
+      c => c.memberIds.includes(memberId) && c.roster?.some(e => e.id === this.member(memberId)?.cloneOf),
+    )
+    if (owner) {
+      await this.adjustRoster(owner.id, memberId, 'remove')
+      return
+    }
     const family = () =>
       new Set(this.store.members.filter(m => m.id === memberId || m.cloneOf === memberId).map(m => m.id))
     const check = (ids: Set<string>) => {
@@ -1431,7 +1435,7 @@ export class Channels {
     check(ids)
     this.store.members = this.store.members.filter(m => !ids.has(m.id))
     const writes = [...this.store.channels.values()]
-      .filter(c => [...rosterIds(c)].some(id => ids.has(id)))
+      .filter(c => [...activeIds(c)].some(id => ids.has(id)))
       .map(c => this.store.saveChannel(withoutMembers(c, ids)))
     await Promise.all([...writes, this.store.saveMembers()])
     for (const [id, run] of this.store.runs) if (ids.has(run.memberId)) this.store.runs.delete(id)
@@ -1458,7 +1462,7 @@ export class Channels {
       throw new Error('已经有同名的 AI 成员')
     if (!member && isReservedMentionName(name)) throw new Error('「全体」「all」留给 @全体，换个名字吧')
     const existingChannel = typeof raw.channelId === 'string' && raw.channelId ? raw.channelId : null
-    if (existingChannel) checkCapacity(rosterIds(this.writable(existingChannel)).add(member?.id ?? sessionId).size)
+    if (existingChannel) checkCapacity(activeIds(this.writable(existingChannel)).add(member?.id ?? sessionId).size)
     const channelId =
       existingChannel ?? (await this.create({ name: raw.channelName ?? '', projectId: record.projectId }))
     if (!member) {
@@ -2678,7 +2682,17 @@ export class Channels {
     await this.deps
       .call('engine:renameSession', [record.id, shared ? member.name : title])
       .catch(e => this.deps.log?.('频道会话改名失败', e))
-    if (shared) {
+    // 建会话期间可能改过成员定义。旧配置的会话只用于已开始的活。
+    const latest = this.member(member.id)
+    if (
+      shared &&
+      latest?.mode === 'shared' &&
+      latest.engine === member.engine &&
+      latest.projectId === member.projectId &&
+      latest.copyId === member.copyId &&
+      JSON.stringify(latest.settings) === JSON.stringify(member.settings) &&
+      JSON.stringify(latest.tools) === JSON.stringify(member.tools)
+    ) {
       this.store.members = this.store.members.map(m => (m.id === member.id ? { ...m, sharedSessionId: record.id } : m))
       await this.store.saveMembers()
     }
@@ -2974,109 +2988,222 @@ export class Channels {
     return this.callerOf(sessionId)
   }
 
-  async toolRoster(sessionId: string, action: string, name?: string, instructions?: string): Promise<string> {
-    const { c, member: lead } = this.leadCaller(sessionId)
-    const ids = rosterIds(c)
-    const members = this.store.members.filter(m => ids.has(m.id))
-    if (action === 'list') {
-      const active = new Set(c.memberIds)
-      return JSON.stringify(
-        members.map(m => ({
-          name: m.name,
-          engine: m.engine,
-          model: m.settings.model ?? null,
-          effort: m.settings.effort ?? null,
-          permissionMode: m.settings.permissionMode ?? null,
-          mode: m.mode,
-          sameDir: m.sameDir ?? 'queue',
-          copyPerTask: !!m.copyPerTask,
-          instructions: m.instructions,
-          role: c.roles?.[m.id] ?? '',
-          lead: m.id === lead.id,
-          bound: !!m.bound,
-          active: active.has(m.id),
-          sessions: members.filter(peer => active.has(peer.id) && (peer.id === m.id || peer.cloneOf === m.id)).length,
-          cloneOf: m.cloneOf ? this.member(m.cloneOf)?.name : null,
-          unfinished: [...this.store.runs.values()].filter(r => r.memberId === m.id && r.phase !== 'ended').length,
-        })),
-      )
+  private makeEntry(c: StoredChannel, raw: RosterConfig, id = randomUUID() as string): RosterEntry {
+    const name = cleanName(raw.name, '成员名')
+    if (
+      c.roster?.some(e => e.id !== id && e.config.name.toLowerCase() === name.toLowerCase()) ||
+      c.memberIds.some(memberId => {
+        const m = this.member(memberId)
+        return m && m.cloneOf !== id && m.name.toLowerCase() === name.toLowerCase()
+      })
+    )
+      throw new Error('本频道已有同名成员')
+    const validated = this.buildMemberConfig(
+      { ...raw, id: undefined, projectId: c.projectId ?? '', copyId: null },
+      undefined,
+      true,
+    )
+    const { engine, settings, instructions, mode, tools, avatar, sameDir, copyPerTask } = validated
+    return { id, config: { name, engine, settings, instructions, mode, tools, avatar, sameDir, copyPerTask } }
+  }
+
+  private makeClone(
+    c: StoredChannel,
+    entry: RosterEntry,
+    taken = new Set(this.store.members.map(m => m.name.toLowerCase())),
+  ): AgentConfig {
+    const base = entry.config.name
+    const reserved = new Set(c.roster?.filter(e => e.id !== entry.id).map(e => e.config.name.toLowerCase()))
+    if (c.memberIds.some(id => this.member(id)?.cloneOf === entry.id)) reserved.add(base.toLowerCase())
+    let name = base
+    for (let n = 2; taken.has(name.toLowerCase()) || reserved.has(name.toLowerCase()); n++) {
+      const suffix = ' ' + n
+      name = base.slice(0, NAME_MAX - suffix.length).trimEnd() + suffix
     }
-    const targetName = cleanName(name, '成员名')
-    const target = members.find(m => m.name.toLowerCase() === targetName.toLowerCase())
-    if (!target) throw new Error('请选择本频道成员表里的 AI 成员')
-    return this.adjustRoster(c.id, target.id, action, instructions, lead.id)
+    return {
+      ...this.buildMemberConfig({ ...entry.config, name, projectId: c.projectId ?? '', copyId: null }),
+      cloneOf: entry.id,
+    }
+  }
+
+  private async addDefinition(c: StoredChannel, raw: RosterConfig): Promise<string> {
+    this.writable(c.id)
+    checkCapacity(activeIds(c).size + 1)
+    const entry = this.makeEntry(c, raw)
+    const next = { ...c, roster: [...c.roster!, entry] }
+    const clone = this.makeClone(next, entry)
+    await this.persistClone(next, clone, SELF_ID)
+    return clone.id
+  }
+
+  async editDefinition(channelId: string, id: string, raw: RosterConfig | null): Promise<void> {
+    const c = this.writable(channelId)
+    if (!c.roster?.some(e => e.id === id)) throw new Error('成员定义不存在')
+    const clones = this.store.members.filter(m => m.cloneOf === id && c.memberIds.includes(m.id))
+    if (raw === null) {
+      if (clones.length) throw new Error('请先移除这个定义的所有分身')
+      await this.store.saveChannel({ ...c, roster: c.roster.filter(e => e.id !== id) })
+    } else {
+      const entry = this.makeEntry(c, raw, id)
+      const updates = new Map(
+        clones.map(m => {
+          const config = this.buildMemberConfig(
+            {
+              ...entry.config,
+              id: m.id,
+              name: m.name,
+              projectId: m.projectId,
+              copyId: m.copyId,
+              avatar: entry.config.avatar ?? null,
+            },
+            m,
+          )
+          if (
+            config.settings.model !== m.settings.model ||
+            config.settings.permissionMode !== m.settings.permissionMode ||
+            config.mode !== m.mode ||
+            JSON.stringify(config.tools) !== JSON.stringify(m.tools)
+          )
+            config.sharedSessionId = null
+          return [m.id, config] as const
+        }),
+      )
+      await this.store.saveRoster(
+        { ...c, roster: c.roster.map(e => (e.id === id ? entry : e)) },
+        this.store.members.map(m => updates.get(m.id) ?? m),
+      )
+      for (const old of clones) {
+        const next = updates.get(old.id)!
+        const keys = (['effort', 'fast', 'ultracode'] as const).filter(
+          k => next.settings[k] !== undefined && next.settings[k] !== old.settings[k],
+        )
+        if (next.sharedSessionId && next.mode === 'shared' && keys.length)
+          await this.deps
+            .call('engine:updateSession', [
+              next.sharedSessionId,
+              Object.fromEntries(keys.map(k => [k, next.settings[k]])),
+            ])
+            .catch(e => this.deps.log?.('同步分身会话设置失败', e))
+      }
+    }
+    this.changed()
+  }
+
+  async toolRoster(
+    sessionId: string,
+    action: string,
+    name?: string,
+    instructions?: string,
+    newName?: string,
+  ): Promise<string> {
+    const { c, member: lead } = this.leadCaller(sessionId)
+    const members = c.memberIds.flatMap(id => this.member(id) ?? [])
+    const summary = (m: AgentConfig) => ({
+      name: m.name,
+      role: c.roles?.[m.id] ?? '',
+      lead: c.lead === m.id,
+      unfinished: [...this.store.runs.values()].filter(r => r.memberId === m.id && r.phase !== 'ended').length,
+    })
+    const features = (m: RosterConfig) => ({
+      name: m.name,
+      engine: m.engine,
+      model: m.settings.model ?? null,
+      effort: m.settings.effort ?? null,
+      permissionMode: m.settings.permissionMode ?? null,
+      mode: m.mode,
+      sameDir: m.sameDir ?? 'queue',
+      copyPerTask: !!m.copyPerTask,
+      instructions: m.instructions,
+    })
+    if (action === 'list') {
+      const definitions =
+        c.roster?.map(entry => {
+          const clones = members.filter(m => m.cloneOf === entry.id).map(summary)
+          return { ...features(entry.config), candidate: !clones.length, clones }
+        }) ?? []
+      const ordinary = members
+        .filter(m => !c.roster?.some(entry => entry.id === m.cloneOf))
+        .map(m => ({ ...features(m), ...summary(m), ordinary: true, bound: !!m.bound }))
+      return JSON.stringify([...definitions, ...ordinary])
+    }
+    const targetName = cleanName(name, '成员名').toLowerCase()
+    const target =
+      action === 'add'
+        ? c.roster?.find(e => e.config.name.toLowerCase() === targetName)
+        : members.find(m => m.name.toLowerCase() === targetName)
+    if (!target) throw new Error('找不到本频道的成员或定义')
+    return this.adjustRoster(c.id, target.id, action, instructions, newName, lead.id)
   }
 
   async adjustRoster(
     channelId: string,
-    memberId: string,
+    id: string,
     action: string,
     instructions?: string,
+    newName?: string,
     actorId = SELF_ID,
   ): Promise<string> {
     const c = this.writable(channelId)
-    const active = c.memberIds.includes(memberId)
-    const target = this.member(memberId)
-    if (!target || !rosterIds(c).has(memberId)) throw new Error('请选择本频道成员表里的 AI 成员')
-    if (action === 'set_role') {
-      if (!active) throw new Error('请先引入这名候选成员')
-      if (typeof instructions !== 'string' || instructions.length > INSTRUCTIONS_MAX)
-        throw new Error('请填写不超过 2000 字的分工，传空串可清除')
-      const roles = { ...c.roles }
-      if (instructions.trim()) roles[memberId] = instructions.trim()
-      else delete roles[memberId]
-      await this.store.saveChannel({ ...c, roles })
-      this.event(channelId, 'roleChanged', { targetId: memberId, value: target.name }, actorId)
-    } else if (action === 'add' || action === 'add_clone') {
-      if (target.bound || target.cloneOf) throw new Error('只能增加成员表里未绑定已有会话的本体')
-      if (!active) {
-        if (action === 'add_clone') throw new Error('请先引入这名候选成员')
-        await this.addMember(channelId, memberId, actorId)
-        return '已引入候选成员：' + target.name
-      }
-      return this.addClone(c, target, actorId)
-    } else if (action === 'remove' || action === 'remove_clone') {
-      if (!active || (action === 'remove_clone' && !target.cloneOf)) throw new Error('请选择在岗成员或分身')
-      if (c.lead === memberId) throw new Error('请先更换频道牵头')
-      if (target.bound) throw new Error('绑定已有会话的成员请从会话退出频道')
-      const reason = this.memberInUse(memberId)
+    if (action === 'add') {
+      const entry = c.roster?.find(e => e.id === id)
+      if (!entry) throw new Error('只能给成员表里的定义增加分身')
+      checkCapacity(activeIds(c).size + 1)
+      const clone = this.makeClone(c, entry)
+      await this.persistClone(c, clone, actorId)
+      return this.clonePolicy(clone)
+    }
+    const member = this.member(id)
+    if (!member || !c.memberIds.includes(id)) throw new Error('请选择在岗成员')
+    const clone = c.roster?.some(e => e.id === member.cloneOf)
+    if (action === 'remove') {
+      if (!clone) throw new Error('只能移除成员表的分身')
+      if (c.lead === id) throw new Error('请先更换频道牵头')
+      const reason = this.memberInUse(id)
       if (reason) throw new Error(reason)
-      if (!target.cloneOf) {
-        await this.removeMember(channelId, memberId, true, actorId)
-        return '已撤回候选：' + target.name
+      await this.store.saveRoster(
+        withoutMembers(c, new Set([id])),
+        this.store.members.filter(m => m.id !== id),
+      )
+      this.event(c.id, 'cloneRemoved', { targetId: id, value: member.name }, actorId)
+    } else if (action === 'set_role') {
+      if (instructions === undefined && newName === undefined) throw new Error('请提供新名字或分工')
+      if (instructions !== undefined && (typeof instructions !== 'string' || instructions.length > INSTRUCTIONS_MAX))
+        throw new Error('分工最多 2000 字')
+      const name = newName === undefined ? member.name : cleanName(newName, '成员名')
+      if (newName !== undefined && !clone) throw new Error('只有分身能通过成员表改名')
+      if (
+        newName !== undefined &&
+        (isReservedMentionName(name) ||
+          this.store.members.some(m => m.id !== id && m.name.toLowerCase() === name.toLowerCase()) ||
+          c.roster?.some(e => e.id !== member.cloneOf && e.config.name.toLowerCase() === name.toLowerCase()))
+      )
+        throw new Error('新名字重复或为保留名')
+      const roles = { ...c.roles }
+      if (instructions !== undefined) {
+        if (instructions.trim()) roles[id] = instructions.trim()
+        else delete roles[id]
       }
-      this.store.members = this.store.members.filter(m => m.id !== memberId)
-      await Promise.all([this.store.saveChannel(withoutMembers(c, new Set([memberId]))), this.store.saveMembers()])
-      this.event(channelId, 'cloneRemoved', { targetId: memberId, value: target.name }, actorId)
+      if (name !== member.name) {
+        await this.store.saveRoster(
+          { ...c, roles },
+          this.store.members.map(m => (m.id === id ? { ...m, name } : m)),
+        )
+        this.event(c.id, 'memberRenamed', { targetId: id, value: member.name + ' → ' + name }, actorId)
+      } else await this.store.saveChannel({ ...c, roles })
+      if (instructions !== undefined && (c.roles?.[id] ?? '') !== instructions.trim())
+        this.event(c.id, 'roleChanged', { targetId: id, value: name }, actorId)
     } else throw new Error('未知的成员操作')
     this.changed()
-    return '已更新：' + target.name
+    return '已更新：' + (newName ?? member.name)
   }
 
-  private async addClone(c: StoredChannel, target: AgentConfig, actorId: string): Promise<string> {
-    checkCapacity(rosterIds(c).size + 1)
-    const names = new Set(this.store.members.map(m => m.name.toLowerCase()))
-    let name: string
-    let n = 2
-    do {
-      const suffix = ' ' + n++
-      name = target.name.slice(0, NAME_MAX - suffix.length).trimEnd() + suffix
-    } while (names.has(name.toLowerCase()))
-    const clone = {
-      ...structuredClone(target),
-      name,
-      id: randomUUID(),
-      cloneOf: target.id,
-      sharedSessionId: null,
-      createdAt: this.now(),
-    }
-    this.store.members = [...this.store.members, clone]
-    await Promise.all([
-      this.store.saveMembers(),
-      this.store.saveChannel({ ...c, memberIds: [...c.memberIds, clone.id] }),
-    ])
-    this.event(c.id, 'cloneAdded', { targetId: clone.id, value: name }, actorId)
+  private async persistClone(c: StoredChannel, clone: AgentConfig, actorId: string): Promise<void> {
+    await this.store.saveRoster({ ...c, memberIds: [...c.memberIds, clone.id] }, [...this.store.members, clone])
+    this.event(c.id, 'cloneAdded', { targetId: clone.id, value: clone.name }, actorId)
     this.changed()
+  }
+
+  private clonePolicy(clone: AgentConfig): string {
     let policy = '同目录独立修改任务默认排队'
     if (usesTaskCopies(clone) || clone.sameDir === 'together' || !editsFreely(clone)) policy = '可并行'
     else if (
@@ -3087,7 +3214,7 @@ export class Channels {
       !clone.copyId
     )
       policy = '目录冲突时新建副本并行'
-    return '已增加分身：' + name + '（' + policy + '）'
+    return '已增加分身：' + clone.name + '（' + policy + '）'
   }
 
   async toolProjectGuide(sessionId: string, action: string, content?: string, version?: string): Promise<string> {
@@ -4207,7 +4334,7 @@ export class Channels {
     }
     const byName = (name: string): string | null =>
       c.memberIds.map(id => this.member(id)).find(m => m && m.name.toLowerCase() === name.toLowerCase())?.id ?? null
-    const steps = planSteps(args.steps, byName, !c.templateMemberIds)
+    const steps = planSteps(args.steps, byName, !c.roster)
     const problem = draftProblem(steps, this.flowMemberCheck(c))
     if (problem) throw new Error(`${problem}。改好再调用 task_done`)
     out.steps = steps
@@ -4889,7 +5016,7 @@ export class Channels {
           channel: c.name,
           request: planner.request,
           leadTools: !!this.deps.channelTools && c.lead === planner.memberId,
-          fixedEffort: !!c.templateMemberIds,
+          fixedEffort: !!c.roster,
           members: this.relayPeers(c, '', route).filter(x => local.has(x.name)),
           auto,
           route,
@@ -5022,7 +5149,7 @@ export class Channels {
           channel: c.name,
           request: now.planner.request,
           leadTools: !!this.deps.channelTools && c.lead === memberId,
-          fixedEffort: !!c.templateMemberIds,
+          fixedEffort: !!c.roster,
           members: this.relayPeers(c, '').filter(x => local.has(x.name)),
           auto: now.planner.auto,
           mention: now.planner.mention,

@@ -376,8 +376,11 @@ export async function initChannels(ctx: AppContext): Promise<void> {
   ipc.handle('channels:saveMember', (_e, channelId, input) =>
     channels.saveMember(typeof channelId === 'string' && channelId ? channelId : null, input as AgentInput),
   )
-  ipc.handle('channels:adjustRoster', (_e, channelId, memberId, action, role) =>
-    channels.adjustRoster(str(channelId, '频道'), str(memberId, '成员'), str(action, '操作'), role),
+  ipc.handle('channels:editDefinition', (_e, channelId, id, config) =>
+    channels.editDefinition(str(channelId, '频道'), str(id, '定义'), config),
+  )
+  ipc.handle('channels:adjustRoster', (_e, channelId, memberId, action, role, newName) =>
+    channels.adjustRoster(str(channelId, '频道'), str(memberId, '成员'), str(action, '操作'), role, newName),
   )
   ipc.handle('channels:addMember', (_e, channelId, memberId) =>
     channels.addMember(str(channelId, '频道'), str(memberId, '成员')),

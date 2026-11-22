@@ -27,12 +27,13 @@ const TOOLS = [
   {
     name: 'channel_roster',
     description:
-      '仅牵头可用。list 查看成员特点、分工、分身和未结任务。add 引入候选或为在岗本体增加一个分身。remove 删除一个分身或撤回本体。set_role 设置本频道分工，传空字符串清除。add_clone 和 remove_clone 专用于分身。',
+      '仅牵头可用。list 查看成员定义及其在岗分身。add 按定义名称加一个分身，remove 按分身名移除。set_role 可修改分身名字或本频道分工，空分工表示清除。普通成员只可调整分工。',
     inputSchema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'add', 'remove', 'set_role', 'add_clone', 'remove_clone'] },
+        action: { type: 'string', enum: ['list', 'add', 'remove', 'set_role'] },
         name: { type: 'string', description: '成员名，list 不填' },
+        new_name: { type: 'string', description: '仅 set_role 使用。分身的新名字' },
         instructions: { type: 'string', description: '仅 set_role 使用。本频道分工，空串清除' },
       },
       required: ['action'],
@@ -43,7 +44,7 @@ const TOOLS = [
   {
     name: 'project_guide',
     description:
-      '仅牵头可用。read 读取默认本机项目根目录的 AGENTS.md 全文和版本。write 提交全文及刚读到的版本，最多 32 KB。',
+      '仅牵头可用。read 读取默认本机项目根目录的 AGENTS.md 全文和版本。write 提交全文及刚读到的版本，最多 32 KB。Claude Code 默认在项目及上级目录均无 CLAUDE.md、.claude/CLAUDE.md、CLAUDE.local.md 时读取 AGENTS.md。有这些文件时由用户决定是否在 CLAUDE.md 中引用 AGENTS.md，本工具只写 AGENTS.md。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -310,12 +311,15 @@ function mcpServer(channels: () => Channels | null, sessionId: string): Server {
       switch (request.params.name) {
         case 'channel_roster': {
           const action = str(args, 'action', true)!
+          if (!['list', 'add', 'remove', 'set_role'].includes(action)) throw new Error('未知的成员操作')
+          if (action === 'set_role' && args.instructions === undefined && args.new_name === undefined)
+            throw new Error('请提供新名字或分工')
           onlyKeys(
             args,
             action === 'list'
               ? ['action']
               : action === 'set_role'
-                ? ['action', 'name', 'instructions']
+                ? ['action', 'name', 'instructions', 'new_name']
                 : ['action', 'name'],
           )
           return text(
@@ -323,7 +327,8 @@ function mcpServer(channels: () => Channels | null, sessionId: string): Server {
               sessionId,
               action,
               str(args, 'name', action !== 'list'),
-              action === 'set_role' ? stringIncludingEmpty(args, 'instructions') : undefined,
+              args.instructions !== undefined ? stringIncludingEmpty(args, 'instructions') : undefined,
+              args.new_name !== undefined ? str(args, 'new_name', true) : undefined,
             ),
           )
         }

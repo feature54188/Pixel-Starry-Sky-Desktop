@@ -1,6 +1,7 @@
 import type { RunnerView } from '../shared/types/runner'
 import type {
   AgentInput,
+  RosterConfig,
   ChannelAttachments,
   ChannelInput,
   ChannelNotify,
@@ -124,11 +125,13 @@ export interface ChannelsBridge {
   markRead(channelId: string): Promise<void>
   /** 新建或编辑 AI 成员；带 channelId 时顺便加进这个频道。返回成员 id */
   saveMember(channelId: string | null, input: AgentInput): Promise<string>
+  editDefinition(channelId: string, id: string, config: RosterConfig | null): Promise<void>
   adjustRoster(
     channelId: string,
     memberId: string,
     action: 'add' | 'remove' | 'set_role',
     role?: string,
+    newName?: string,
   ): Promise<string>
   addMember(channelId: string, memberId: string): Promise<void>
   removeMember(channelId: string, memberId: string): Promise<void>

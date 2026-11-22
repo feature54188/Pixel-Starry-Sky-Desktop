@@ -1,5 +1,5 @@
 // 频道预设的界面（docs/ui/channel-presets.md）：新建频道时选预设和看摘要、从频道复制、存为预设、管理预设
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useI18n } from '@/i18n/I18nProvider'
 import { tr, translateMessage } from '../../i18n/core'
 import { cn, EngineIcon } from '@/ui'
@@ -19,8 +19,6 @@ import {
   setPresets,
   usePresets,
   withPreset,
-  withoutPreset,
-  type ChannelPreset,
   type PresetForm,
   type PresetPart,
 } from './presets'
@@ -33,11 +31,6 @@ const INPUT =
 function memberCount(count: number): string {
   if (!count) return tr('channels.preset.noMembers')
   return count === 1 ? tr('channels.preset.memberOne') : tr('channels.preset.memberCount', { n: count })
-}
-
-function presetSubtitle(preset: ChannelPreset): string {
-  const members = memberCount(preset.members?.length ?? 0)
-  return preset.lead ? `${members} · ${tr('channels.preset.hasLead')}` : members
 }
 
 const alertSummary = (form: Pick<PresetForm, 'alerts' | 'digestHour'>): string => {
@@ -53,87 +46,6 @@ function dispatchSummary(form: Pick<PresetForm, 'planFirst' | 'relay' | 'rules'>
   ].join(tr('channels.preset.sep'))
 }
 
-/** 新建弹窗顶部：选一个预设；没有预设时只留说明和「从频道复制」 */
-export function PresetChooser({
-  active,
-  canCopy,
-  onPick,
-  onCopy,
-  onManage,
-}: {
-  /** 选中的预设；null 是空白；'copy' 是从频道复制来的 */
-  active: string | null
-  canCopy: boolean
-  onPick: (id: string | null) => void
-  onCopy: () => void
-  onManage: () => void
-}) {
-  useI18n()
-  const { items, defaultId } = usePresets()
-  const copy = canCopy && (
-    <button type="button" data-preset-copy onClick={onCopy} className={LINK}>
-      {tr('channels.preset.copy')}
-    </button>
-  )
-  if (!items.length && !active && !canCopy) return null
-  if (!items.length && !active)
-    return (
-      <div className="flex items-baseline justify-between gap-3 text-meta text-fg-muted">
-        <span>{tr('channels.preset.emptyHint')}</span>
-        {copy}
-      </div>
-    )
-  const ordered = [...items].sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId))
-  const cards = [{ id: null, name: tr('channels.preset.blank'), sub: tr('channels.preset.blankHint') }].concat(
-    ordered.map(p => ({ id: p.id as never, name: p.name, sub: presetSubtitle(p) })),
-  ) as { id: string | null; name: string; sub: string }[]
-  return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-meta font-medium text-fg-muted">{tr('channels.preset.choose')}</span>
-        <span className="flex gap-3">
-          {copy}
-          <button type="button" data-preset-manage onClick={onManage} className={LINK}>
-            {tr('channels.preset.manage')}
-          </button>
-        </span>
-      </div>
-      {/* 预设多时只占两行，在这里滚动 */}
-      <div className="grid max-h-[116px] grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-1.5 overflow-y-auto [scrollbar-width:thin]">
-        {cards.map(card => (
-          <button
-            key={card.id ?? 'blank'}
-            type="button"
-            data-preset-card={card.id ?? 'blank'}
-            aria-pressed={active === card.id}
-            title={`${card.name}\n${card.sub}`}
-            onClick={() => onPick(card.id)}
-            className={cn(
-              'press flex h-[54px] min-w-0 flex-col justify-center rounded-md border px-2.5 text-left',
-              active === card.id ? 'border-accent-line bg-accent-soft' : 'border-line-card bg-surface hover:bg-hover',
-            )}
-          >
-            <span
-              className={cn(
-                'flex min-w-0 items-center gap-1 text-list font-medium',
-                active === card.id ? 'text-accent-fg' : 'text-fg',
-              )}
-            >
-              <span className="truncate">{card.name}</span>
-              {card.id === defaultId && card.id && (
-                <span className="shrink-0 text-meta text-warn" title={tr('channels.preset.isDefault')}>
-                  ★
-                </span>
-              )}
-            </span>
-            <span className="truncate text-meta text-fg-muted">{card.sub}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-2 border-t border-line-subtle px-2.5 py-1.5 text-meta">
@@ -143,7 +55,7 @@ function SummaryRow({ label, children }: { label: string; children: React.ReactN
   )
 }
 
-/** 选了预设之后的摘要：弹窗不变长，要改点「展开修改」 */
+/** 复制频道时查看设置摘要 */
 export function PresetSummary({
   source,
   form,
@@ -242,7 +154,7 @@ export function CopyFromChannel({
       </div>
       <div className="flex max-h-[212px] flex-col gap-0.5 overflow-y-auto rounded-lg border border-line-card p-1 [scrollbar-width:thin]">
         {channels.map(c => {
-          const count = presetableMembers(c, members).length
+          const count = c.roster?.length ?? presetableMembers(c, members).length
           return (
             <button
               key={c.id}
@@ -273,9 +185,8 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
   const agents = allMembers.filter((m): m is AgentMember => m.kind === 'agent')
   const [name, setName] = useState(channel.name)
   const [parts, setParts] = useState<readonly PresetPart[]>(DEFAULT_PRESET_PARTS)
-  const [reserves, setReserves] = useState<string[]>(
-    () => channel.templateMemberIds?.filter(id => !channel.memberIds.includes(id)) ?? [],
-  )
+  const snapshot = presetFromChannel(channel, agents, { id: '', name: '', updatedAt: 0 })
+  const [reserves, setReserves] = useState<string[]>(() => snapshot.reserveIds ?? [])
   const [overwrite, setOverwrite] = useState(true)
   const conflict = presets.items.find(p => sameName(p.name, name))
   const [wantDefault, setWantDefault] = useState<boolean | null>(null)
@@ -285,9 +196,9 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
   // 没动过勾选框：第一个预设默认勾上；覆盖默认预设时它还是默认
   const makeDefault = wantDefault ?? (!presets.defaultId || presets.defaultId === replacing)
   const blocked = !name.trim() || (!!conflict && !overwrite) || full
-  const form = formFromPreset(presetFromChannel(channel, agents, { id: '', name: '', updatedAt: 0 }), agents)
-  const picked = presetableMembers(channel, agents)
-  const lead = picked.find(m => m.id === channel.lead)
+  const form = formFromPreset(snapshot, agents)
+  const picked = (snapshot.members ?? []).map(m => ({ id: m.sourceId, name: m.config.name }))
+  const lead = picked.find(m => m.id === snapshot.lead)
   const rows: { part: PresetPart; title: string; detail: string }[] = [
     {
       part: 'members',
@@ -307,11 +218,6 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
       detail: channel.notes?.trim() ? excerpt(channel.notes) : tr('channels.preset.none'),
     },
     { part: 'alerts', title: tr('channels.preset.partAlerts'), detail: alertSummary(form) },
-    {
-      part: 'project',
-      title: tr('channels.dialog.project'),
-      detail: tr('channels.preset.partProjectHint', { name: channel.project ?? tr('channels.dialog.noProject') }),
-    },
   ]
   const submit = () => {
     if (blocked) return
@@ -389,7 +295,7 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
               ))}
             </div>
           </fieldset>
-          {parts.includes('members') && picked.some(m => m.id !== channel.lead) && (
+          {parts.includes('members') && !channel.roster && picked.some(m => m.id !== snapshot.lead) && (
             <fieldset className="flex flex-col gap-1">
               <legend className="text-meta text-fg-muted">{tr('channels.template.reserve')}</legend>
               {picked
@@ -420,172 +326,6 @@ export function SavePresetDialog({ channel, onClose }: { channel: Channel; onClo
           <p className="text-meta text-fg-muted">{tr('channels.preset.saveHint')}</p>
           <button type="submit" hidden />
         </form>
-      }
-    />
-  )
-}
-
-/** 管理预设：重命名、设默认、删除；新增和修改走频道菜单的「存为预设」 */
-export function ManagePresetsDialog({ onClose }: { onClose: () => void }) {
-  useI18n()
-  const presets = usePresets()
-  const channels = useChannels(s => s.channels).filter(c => c.scope === 'local')
-  const members = useChannels(s => s.members).filter((m): m is AgentMember => m.kind === 'agent')
-  const [picking, setPicking] = useState(false)
-  const [source, setSource] = useState<Channel | null>(null)
-  const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null)
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const renameCancelled = useRef(false)
-  const write = (next: typeof presets): boolean => {
-    try {
-      setPresets(next)
-      setError(null)
-      return true
-    } catch (e) {
-      setError(errorText(e))
-      return false
-    }
-  }
-  const commitRename = () => {
-    if (!renaming || renameCancelled.current) return
-    const name = renaming.name.trim()
-    if (!name) return setRenaming(null)
-    if (presets.items.some(p => p.id !== renaming.id && sameName(p.name, name)))
-      return setError(tr('channels.preset.nameTaken'))
-    const current = presets.items.find(p => p.id === renaming.id)
-    if (current && write(withPreset(presets, { ...current, name, updatedAt: Date.now() }, false))) setRenaming(null)
-  }
-  if (source) return <SavePresetDialog channel={source} onClose={() => setSource(null)} />
-  return (
-    <ConfirmDialog
-      title={tr('channels.preset.manage')}
-      confirmLabel=""
-      hideConfirm
-      cancelLabel={tr('channels.preset.done')}
-      busy={false}
-      error={error}
-      onConfirm={onClose}
-      onCancel={onClose}
-      description={
-        <div data-preset-manage-list className="flex flex-col gap-3">
-          {channels.length > 0 &&
-            (picking ? (
-              <CopyFromChannel
-                channels={channels}
-                members={members}
-                onPick={c => {
-                  setPicking(false)
-                  setSource(c)
-                }}
-                onCancel={() => setPicking(false)}
-              />
-            ) : (
-              <button type="button" className={cn(LINK, 'self-start')} onClick={() => setPicking(true)}>
-                {tr('channels.template.saveFrom')}
-              </button>
-            ))}
-          {presets.items.length === 0 ? (
-            <p className="text-meta text-fg-muted">{tr('channels.preset.manageEmpty')}</p>
-          ) : (
-            <div className="flex flex-col rounded-lg border border-line-card">
-              {presets.items.map((p, i) => (
-                <div
-                  key={p.id}
-                  data-preset-row={p.id}
-                  className={cn('flex items-center gap-3 px-2.5 py-2', i > 0 && 'border-t border-line-subtle')}
-                >
-                  {renaming?.id === p.id ? (
-                    <input
-                      autoFocus
-                      data-own-escape
-                      value={renaming.name}
-                      maxLength={PRESET_NAME_MAX}
-                      aria-label={tr('channels.preset.name')}
-                      onChange={e => setRenaming({ id: p.id, name: e.target.value })}
-                      onBlur={commitRename}
-                      onKeyDown={e => {
-                        if (e.nativeEvent.isComposing) return
-                        if (e.key === 'Enter') commitRename()
-                        if (e.key === 'Escape') {
-                          renameCancelled.current = true
-                          setRenaming(null)
-                          setError(null)
-                        }
-                      }}
-                      className={INPUT}
-                    />
-                  ) : (
-                    <span className="flex min-w-0 flex-1 flex-col">
-                      <span className="flex min-w-0 items-center gap-1.5 text-list text-fg">
-                        <span className="truncate">{p.name}</span>
-                        {presets.defaultId === p.id && (
-                          <span className="shrink-0 rounded-sm bg-accent-soft px-1.5 text-meta text-accent-fg">
-                            {tr('channels.preset.isDefault')}
-                          </span>
-                        )}
-                      </span>
-                      <span className="truncate text-meta text-fg-muted">{presetSubtitle(p)}</span>
-                    </span>
-                  )}
-                  {deleting === p.id ? (
-                    <span className="flex shrink-0 gap-3">
-                      <button
-                        type="button"
-                        data-preset-delete-confirm
-                        className="press text-meta text-danger hover:underline"
-                        onClick={() => {
-                          write(withoutPreset(presets, p.id))
-                          setDeleting(null)
-                        }}
-                      >
-                        {tr('channels.preset.deleteConfirm')}
-                      </button>
-                      <button type="button" className={LINK} onClick={() => setDeleting(null)}>
-                        {tr('channels.dialog.cancel')}
-                      </button>
-                    </span>
-                  ) : (
-                    renaming?.id !== p.id && (
-                      <span className="flex shrink-0 gap-3">
-                        <button
-                          type="button"
-                          data-preset-toggle-default
-                          className={LINK}
-                          onClick={() => write({ ...presets, defaultId: presets.defaultId === p.id ? null : p.id })}
-                        >
-                          {tr(
-                            presets.defaultId === p.id ? 'channels.preset.unsetDefault' : 'channels.preset.setDefault',
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          data-preset-rename
-                          className={LINK}
-                          onClick={() => {
-                            renameCancelled.current = false
-                            setRenaming({ id: p.id, name: p.name })
-                          }}
-                        >
-                          {tr('channels.preset.rename')}
-                        </button>
-                        <button
-                          type="button"
-                          data-preset-delete
-                          className="press text-meta text-danger hover:underline"
-                          onClick={() => setDeleting(p.id)}
-                        >
-                          {tr('channels.preset.delete')}
-                        </button>
-                      </span>
-                    )
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-          <p className="text-meta text-fg-muted">{tr('channels.preset.manageHint')}</p>
-        </div>
       }
     />
   )

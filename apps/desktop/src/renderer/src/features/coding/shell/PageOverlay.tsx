@@ -1,5 +1,6 @@
 import { useI18n } from '@/i18n/I18nProvider'
 import { usePage } from '@/features/layout/page'
+import { TeamTemplatesPage } from '@/features/channels/TeamTemplatesPage'
 import { ChannelsPage } from '@/features/channels/ChannelsPage'
 import { TaskBoardPage } from '@/features/board/TaskBoardPage'
 import { STRIPE_WIDTH } from '../layoutModel'
@@ -17,7 +18,9 @@ export function PageOverlay() {
       className="absolute inset-y-0 z-10 flex min-w-0 bg-surface"
       style={{ left: STRIPE_WIDTH, right: STRIPE_WIDTH }}
     >
-      {page === 'board' ? <TaskBoardPage /> : <ChannelsPage membersShown={false} onToggleMembers={noop} />}
+      {page === 'board' && <TaskBoardPage />}
+      {page === 'channels' && <ChannelsPage membersShown={false} onToggleMembers={noop} />}
+      {page === 'templates' && <TeamTemplatesPage />}
     </div>
   )
 }

@@ -154,122 +154,164 @@ describe('项目频道模板', () => {
     ).rejects.toThrow()
     expect(c.state().channels.some(ch => ch.name === '无效')).toBe(false)
   })
-  it('共享成员的分工按频道保存，派活带上定位和分工，撤回候选时清理分工', async () => {
-    const c = await open()
-    const ch = await c.create({
-      name: '项目',
-      projectId: 'p1',
-      template: {
-        lead: 'lead',
-        reserveIds: ['test'],
-        planFirst: false,
-        members: [
-          { sourceId: 'lead', config: agent('牵头') },
-          {
-            sourceId: 'test',
-            config: agent('测试', {
-              instructions: '质量工程',
-              engine: 'codex',
-              settings: { model: 'fixed', effort: 'high', permissionMode: 'ask' },
-              tools: { mode: 'only', ids: ['one'] },
-            }),
-          },
-        ],
-      },
-    })
-    expect(sends()).toHaveLength(0)
-    await c.post(ch, { text: '@牵头 组队', clientId: 'roster' })
-    await settle()
-    const session = sends().at(-1)!.sessionId
-    for (const action of ['list', 'add', 'remove', 'set_role', 'add_clone', 'remove_clone'])
-      await expect(c.toolRoster('other', action, '测试')).rejects.toThrow('牵头')
-    await expect(c.toolRoster(session, 'add', '任意新成员')).rejects.toThrow()
-    await expect(c.toolRoster(session, 'set_role', '测试', '排查')).rejects.toThrow('引入')
-    await c.toolRoster(session, 'add', '测试')
-    const tester = c.state().members.find(m => m.name === '测试')!
-    const other = await c.create({ name: '另一个频道', memberIds: [tester.id] })
-    await c.adjustRoster(other, tester.id, 'set_role', '验收')
-    await c.toolRoster(session, 'set_role', '测试', '回归测试')
-    expect(c.memberConfig(tester.id)?.instructions).toBe('质量工程')
-    expect(c.state().channels.find(x => x.id === other)?.roles?.[tester.id]).toBe('验收')
-    expect(JSON.parse(await c.toolRoster(session, 'list'))).toContainEqual(
-      expect.objectContaining({
-        name: '测试',
-        role: '回归测试',
-        instructions: '质量工程',
-        model: 'fixed',
-        effort: 'high',
-        permissionMode: 'ask',
-        sessions: 1,
-        unfinished: 0,
-      }),
-    )
-    await c.post(ch, { text: '@测试 检查', clientId: 'test-role' })
-    await settle()
-    expect(sends().at(-1)?.text).toContain('质量工程')
-    expect(sends().at(-1)?.text).toContain('回归测试')
-    await expect(c.toolRoster(session, 'remove', '测试')).rejects.toThrow('没做完')
-    finishLast(c, '完成')
-    await settle()
-    await c.toolRoster(session, 'set_role', '测试', '')
-    expect(c.state().channels.find(x => x.id === ch)?.roles?.[tester.id]).toBeUndefined()
-    await c.toolRoster(session, 'set_role', '测试', '排查')
-    await c.toolRoster(session, 'remove', '测试')
-    expect(JSON.parse(await c.toolRoster(session, 'list'))).toContainEqual(
-      expect.objectContaining({ name: '测试', active: false, sessions: 0, role: '' }),
-    )
-    expect(c.state().channels.find(x => x.id === other)?.memberIds).toContain(tester.id)
-    await c.update(ch, { lead: null })
-    await expect(c.toolRoster(session, 'list')).rejects.toThrow('牵头')
-  })
-
-  it('分身继承本体配置并使用独立身份，候选计入并发添加上限，删除源成员和频道会清理分身', async () => {
+  it('候选只保留定义，按分身名派活、改名和撤下，撤下最后一个后可重新引入', async () => {
     const c = await open()
     const ch = await c.create({
       name: '团队',
       projectId: 'p1',
       template: {
-        members: [{ sourceId: 'reserve', config: agent('候选') }],
-        reserveIds: ['reserve'],
+        planFirst: false,
+        lead: 'lead',
+        reserveIds: ['dev', 'qa'],
+        members: [
+          { sourceId: 'lead', config: agent('牵头') },
+          { sourceId: 'dev', config: agent('开发', { instructions: '实现功能', mode: 'shared' }) },
+          { sourceId: 'qa', config: agent('测试') },
+        ],
       },
     })
-    const source = await c.saveMember(
-      ch,
-      agent('开发', {
-        mode: 'shared',
-        engine: 'codex',
-        settings: { model: '固定' },
-        tools: { mode: 'only', ids: ['review'] },
-      }),
+    const state = () => c.state().channels.find(x => x.id === ch)!
+    const entry = state().roster!.find(e => e.config.name === '开发')!
+    expect(state().memberIds).toHaveLength(2)
+    expect(c.memberConfig(entry.id)).toBeNull()
+    expect(c.state().members.some(m => m.name === '开发')).toBe(false)
+    expect((await c.post(ch, { text: '@开发', clientId: 'candidate' })).tasks).toHaveLength(0)
+    await c.post(ch, { text: '@牵头 组队', clientId: 'start' })
+    await settle()
+    const session = sends().at(-1)!.sessionId
+    for (const op of ['list', 'add', 'remove', 'set_role'])
+      await expect(c.toolRoster('other', op, '开发')).rejects.toThrow('牵头')
+    const list = async () => JSON.parse(await c.toolRoster(session, 'list'))
+    expect(await list()).toContainEqual(expect.objectContaining({ name: '开发', candidate: true, clones: [] }))
+    await c.toolRoster(session, 'add', '开发')
+    const first = c.state().members.find(m => m.name === '开发')!.id
+    await c.toolRoster(session, 'set_role', '开发', undefined, '前端')
+    await c.toolRoster(session, 'add', '开发')
+    const second = c.state().members.find(m => m.name === '开发 2')!.id
+    await c.toolRoster(session, 'set_role', '前端', '页面')
+    for (const bad of ['开发 2', 'all', '全体', '测试', '过'.repeat(41)]) {
+      await expect(c.toolRoster(session, 'set_role', '前端', '覆盖', bad)).rejects.toThrow()
+      expect(state().roles?.[first]).toBe('页面')
+    }
+    expect(state().roles?.[second]).toBeUndefined()
+    await c.toolRoster(session, 'set_role', '前端', '修复按钮', '界面')
+    await c.post(ch, { text: '@界面 检查', clientId: 'renamed' })
+    await settle()
+    expect(sends().at(-1)?.text).toContain('修复按钮')
+    expect(sends().at(-1)?.text).toContain('实现功能')
+    await expect(c.toolRoster(session, 'remove', '界面')).rejects.toThrow('没做完')
+    finishLast(c, '完成')
+    await settle()
+    const originalSession = c.memberConfig(first)!.sharedSessionId
+    await c.toolRoster(session, 'set_role', '界面', '', '前端')
+    expect(c.memberConfig(first)?.sharedSessionId).toBe(originalSession)
+    expect(state().roles?.[first]).toBeUndefined()
+    await c.editDefinition(ch, entry.id, { ...entry.config, settings: { model: 'updated' } })
+    for (const id of [first, second]) expect(c.memberConfig(id)?.settings.model).toBe('updated')
+    expect(state().roster?.find(e => e.id === entry.id)?.config.name).toBe('开发')
+    await expect(c.editDefinition(ch, entry.id, null)).rejects.toThrow()
+    await expect(c.toolRoster(session, 'remove', '牵头')).rejects.toThrow('更换')
+    await c.toolRoster(session, 'remove', '前端')
+    await c.toolRoster(session, 'remove', '开发 2')
+    expect(await list()).toContainEqual(expect.objectContaining({ name: '开发', candidate: true, clones: [] }))
+    await c.toolRoster(session, 'add', '开发')
+    await c.toolRoster(session, 'remove', '开发')
+    await c.editDefinition(ch, entry.id, null)
+    expect(state().roster?.some(e => e.id === entry.id)).toBe(false)
+    expect(c.messages(ch).messages).toContainEqual(
+      expect.objectContaining({ event: 'memberRenamed', value: '开发 → 前端', actorId: state().lead }),
     )
-    expect(c.state().channels.find(x => x.id === ch)?.templateMemberIds).toContain(source)
-    const results = await Promise.allSettled(Array.from({ length: 19 }, () => c.adjustRoster(ch, source, 'add')))
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(18)
-    expect(results.filter(r => r.status === 'rejected')).toHaveLength(1)
-    const clones = c.state().members.filter(m => m.kind === 'agent' && m.config?.cloneOf === source)
-    expect(clones).toHaveLength(18)
-    expect(new Set(clones.map(m => m.name)).size).toBe(18)
-    expect(c.memberConfig(clones[0].id)).toMatchObject({
-      sharedSessionId: null,
+  })
+
+  it('候选不限数量，并发添加到 20 个在岗后拒绝；新增和引入已有成员都复制配置', async () => {
+    const c = await open()
+    const candidates = Array.from({ length: 25 }, (_, i) => ({ sourceId: String(i), config: agent('候选' + i) }))
+    const ch = await c.create({
+      name: '项目',
       projectId: 'p1',
-      mode: 'shared',
-      engine: 'codex',
-      settings: { model: '固定' },
-      tools: { mode: 'only', ids: ['review'] },
+      template: { members: candidates, reserveIds: candidates.map(m => m.sourceId) },
     })
-    await expect(c.saveMember(ch, agent('越界'))).rejects.toThrow('20')
-    expect(c.state().members.some(m => m.name === '越界')).toBe(false)
-    await expect(c.adjustRoster(ch, clones[0].id, 'add')).rejects.toThrow('本体')
-    await expect(c.adjustRoster(ch, source, 'remove')).rejects.toThrow('先撤')
-    await c.adjustRoster(ch, clones[0].id, 'remove_clone')
-    expect(c.memberConfig(clones[0].id)).toBeNull()
-    await c.deleteMember(source)
-    expect(c.state().members.some(m => m.kind === 'agent' && m.config?.cloneOf === source)).toBe(false)
-    const next = await c.saveMember(ch, agent('文档'))
-    await c.adjustRoster(ch, next, 'add_clone')
+    const source = await c.saveMember(
+      null,
+      agent('工程师', { engine: 'codex', tools: { mode: 'only', ids: ['review'] } }),
+    )
+    await c.addMember(ch, source)
+    const writer = await c.saveMember(ch, agent('文档'))
+    const state = () => c.state().channels.find(x => x.id === ch)!
+    const entry = state().roster!.find(e => e.config.name === '工程师')!
+    expect(state().memberIds).not.toContain(source)
+    expect(c.memberConfig(writer)?.cloneOf).toBeTruthy()
+    const results = await Promise.allSettled(Array.from({ length: 19 }, () => c.adjustRoster(ch, entry.id, 'add')))
+    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(18)
+    expect(state().memberIds).toHaveLength(21)
+    expect(state().roster).toHaveLength(27)
+    await expect(c.saveMember(ch, agent('超限'))).rejects.toThrow('20')
     await c.delete(ch)
-    expect(c.state().members.some(m => m.kind === 'agent' && m.config?.cloneOf === next)).toBe(false)
-    expect(c.memberConfig(next)).toBeTruthy()
+    expect(c.memberConfig(source)).toBeTruthy()
+    expect(c.memberConfig(writer)).toBeNull()
+  })
+
+  it('共用会话创建期间改了定义的模型，下一项活会按新配置开会话', async () => {
+    let ready!: () => void
+    const started = new Promise<void>(resolve => {
+      ready = resolve
+    })
+    let release!: () => void
+    const pending = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const c = await open(true, {
+      call: async (channel, args) => {
+        calls.push({ channel, args })
+        if (channel === 'engine:createSession') {
+          ready()
+          await pending
+          const id = 's' + (sessions.length + 1)
+          sessions.push({ record: { id, projectId: 'p1' }, state: 'idle' } as SessionSummary)
+          return { id }
+        }
+        return null
+      },
+    })
+    const ch = await c.create({
+      name: '测试',
+      projectId: 'p1',
+      template: { planFirst: false, members: [{ sourceId: 'dev', config: agent('开发', { mode: 'shared' }) }] },
+    })
+    const state = c.state().channels.find(x => x.id === ch)!
+    const entry = state.roster![0]
+    const id = state.memberIds.find(id => id !== SELF_ID)!
+    await c.post(ch, { text: '@开发 第一项', clientId: 'one' })
+    await started
+    await c.editDefinition(ch, entry.id, { ...entry.config, settings: { model: 'new' } })
+    release()
+    await settle()
+    expect(c.memberConfig(id)?.sharedSessionId).toBeNull()
+    finishLast(c, '完成')
+    await settle()
+    await c.post(ch, { text: '@开发 第二项', clientId: 'two' })
+    await settle()
+    expect(c.memberConfig(id)?.sharedSessionId).toBe('s2')
+    expect(calls.filter(call => call.channel === 'engine:createSession').at(-1)?.args[0]).toMatchObject({
+      model: 'new',
+    })
+  })
+
+  it('普通频道仅能查看和调整本频道分工', async () => {
+    const c = await open()
+    const lead = await c.saveMember(null, agent('牵头'))
+    const peer = await c.saveMember(null, agent('开发'))
+    const ch = await c.create({ name: '普通', memberIds: [lead, peer] })
+    await c.update(ch, { lead })
+    await c.post(ch, { text: '@牵头 开工', clientId: 'start' })
+    await settle()
+    const session = sends().at(-1)!.sessionId
+    await expect(c.toolRoster(session, 'add', '开发')).rejects.toThrow()
+    await expect(c.toolRoster(session, 'remove', '开发')).rejects.toThrow()
+    await c.toolRoster(session, 'set_role', '开发', '排查')
+    expect(JSON.parse(await c.toolRoster(session, 'list'))).toContainEqual(
+      expect.objectContaining({ name: '开发', ordinary: true, role: '排查' }),
+    )
   })
 
   it('牵头写入本机项目约定会留记录，相同版本只允许一次更新', async () => {
@@ -285,10 +327,17 @@ describe('项目频道模板', () => {
     await expect(c.toolProjectGuide('other', 'read')).rejects.toThrow('牵头')
     const initial = JSON.parse(await c.toolProjectGuide(session, 'read'))
     expect(initial.content).toBe('')
+    await writeFile(join(root, 'CLAUDE.md'), 'Claude 专用')
+    await mkdir(join(root, '.claude'))
+    await writeFile(join(root, '.claude', 'CLAUDE.md'), '规则')
+    const hint = JSON.parse(await c.toolProjectGuide(session, 'read')).claudeHint
+    expect(hint).toContain('.claude/CLAUDE.md')
     const writes = await Promise.allSettled(
       ['甲', '乙'].map(s => c.toolProjectGuide(session, 'write', s, initial.version)),
     )
     expect(writes.filter(r => r.status === 'fulfilled')).toHaveLength(1)
+    for (const result of writes)
+      if (result.status === 'fulfilled') expect(JSON.parse(result.value).claudeHint).toBe(hint)
     const latest = JSON.parse(await c.toolProjectGuide(session, 'read'))
     expect(latest.content).toBe(await readFile(join(root, 'AGENTS.md'), 'utf8'))
     await expect(c.toolProjectGuide(session, 'write', '字'.repeat(11000), latest.version)).rejects.toThrow('32 KB')

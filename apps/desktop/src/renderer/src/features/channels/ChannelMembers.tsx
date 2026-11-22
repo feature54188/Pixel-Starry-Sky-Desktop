@@ -26,7 +26,13 @@ import { ActionMenu, type MenuAction } from '@/ui/ActionMenu'
 import { ConfirmDialog } from '@/ui/ConfirmDialog'
 import { effortLabel, PERMISSION_INFO, relativeTime } from '@/features/engine'
 import type { AgentMember, Channel, ChannelAgentStatus, ChannelMember, HumanMember } from '@/data/types'
-import type { AgentConfig, AgentPolicy, ChannelNotify, ChannelTaskStatus } from '../../../../shared/types/channels'
+import type {
+  RosterEntry,
+  AgentConfig,
+  AgentPolicy,
+  ChannelNotify,
+  ChannelTaskStatus,
+} from '../../../../shared/types/channels'
 import { usesTaskCopies } from '../../../../shared/types/channels'
 import { agentCredit, machineLabel, MemberAvatar } from './ChannelMessage'
 import { channelLoad, dirConflicts, memberLoad } from './model'
@@ -243,12 +249,14 @@ function AgentDetails({
   const config = member.config
   const toast = useToast()
   const [draft, setDraft] = useState<string | null>(null)
+  const [newName, setName] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const save = async () => {
-    if (draft === null || saving) return
+    if ((draft === null && newName === null) || saving) return
     setSaving(true)
     try {
-      await channelActions.adjustRoster(channelId, member.id, 'set_role', draft)
+      await channelActions.adjustRoster(channelId, member.id, 'set_role', draft ?? undefined, newName ?? undefined)
+      setName(null)
       setDraft(null)
     } catch (e) {
       toast(translateMessage((e as Error).message))
@@ -259,6 +267,20 @@ function AgentDetails({
   if (!config) return null
   return (
     <dl className="mt-1.5 grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 rounded-md bg-subtle px-2 py-1.5 text-meta">
+      {config.cloneOf && editable && (
+        <>
+          <dt className="text-fg-faint">{tr('channels.agent.name')}</dt>
+          <dd>
+            <input
+              aria-label={tr('channels.agent.name')}
+              maxLength={40}
+              className="w-full rounded bg-surface px-1.5 py-1"
+              value={newName ?? member.name}
+              onChange={e => setName(e.target.value)}
+            />
+          </dd>
+        </>
+      )}
       {config.instructions.trim() && (
         <>
           <dt className="text-fg-faint">{tr('channels.members.instructions')}</dt>
@@ -280,7 +302,7 @@ function AgentDetails({
                   value={draft ?? assignment}
                   onChange={e => setDraft(e.target.value)}
                 />
-                {draft !== null && draft !== assignment && (
+                {((draft !== null && draft !== assignment) || (newName !== null && newName !== member.name)) && (
                   <Button variant="ghost" disabled={saving} onClick={() => void save()}>
                     {tr('channels.members.saveRole')}
                   </Button>
@@ -383,7 +405,6 @@ function AgentRow({
   // 队列清空后收起：下次有新的排队不自己弹开
   if (queueOpen && queued === 0) setQueueOpen(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  const toast = useToast()
   const line = agentLine(member, Date.now())
   const status = tr(STATUS_LABEL[member.status])
   // 别人的 AI 成员：只读，没有「打开会话」和档案
@@ -397,7 +418,7 @@ function AgentRow({
     settings?.ultracode && 'Ultracode',
   ].filter((t): t is string => !!t)
   const where = dirText(member, copyName)
-  const role = config?.instructions.trim().split('\n')[0]
+  const role = (assignment || config?.instructions)?.trim().split('\n')[0]
   const sharesText = dirPeers.length
     ? tr('channels.members.sharesDir', { names: dirPeers.join(tr('channels.composer.nameSep')) })
     : undefined
@@ -406,21 +427,8 @@ function AgentRow({
   const actions: MenuAction[] = foreign
     ? [{ label: tr('channels.members.remove'), icon: UserMinus, danger: true, run: () => onRemove(member) }]
     : [
-        ...(member.config
+        ...(member.config && !member.config.cloneOf
           ? [{ label: tr('channels.members.edit'), icon: Pencil, run: () => onEdit(member.config!) }]
-          : []),
-        ...(!readOnly && !team && config && !config.cloneOf && !config.bound
-          ? [
-              {
-                label: tr('channels.members.addClone'),
-                icon: UserPlus,
-                run: () => {
-                  void channelActions
-                    .adjustRoster(channelId, member.id, 'add')
-                    .catch(e => toast(translateMessage((e as Error).message)))
-                },
-              },
-            ]
           : []),
         // 复制：新成员加进这个频道，所以归档的频道、团队频道（成员要另外登记）没有
         ...(member.config && !readOnly && !team
@@ -677,6 +685,7 @@ export function ChannelMembers({
   const live = channelsLive
   const [dialog, setDialog] = useState<
     | { kind: 'agent'; editing: AgentConfig | null; from?: AgentConfig }
+    | { kind: 'definition'; entry: RosterEntry }
     | { kind: 'channel' }
     | { kind: 'savePreset' }
     | { kind: 'delete' }
@@ -690,6 +699,7 @@ export function ChannelMembers({
   const [busy, setBusy] = useState(false)
   const [channelMenu, setChannelMenu] = useState<{ x: number; y: number } | null>(null)
   const humans = members.filter((m): m is HumanMember => m.kind === 'human')
+  const [deleteEntry, setDeleteEntry] = useState<RosterEntry | null>(null)
   const agents = members.filter((m): m is AgentMember => m.kind === 'agent')
   const copyNames = useCopyNames(agents)
   const copyNameOf = (a: AgentMember) => (a.config?.copyId ? copyNames.get(a.config.copyId) : undefined)
@@ -729,6 +739,75 @@ export function ChannelMembers({
   const update = (patch: Parameters<typeof channelActions.updateChannel>[1]) =>
     void channelActions.updateChannel(channel.id, patch).catch(policyFailed)
   const setArchived = (on: boolean) => update({ archived: on })
+  const grouped = new Map<string, AgentMember[]>()
+  for (const member of agents) {
+    const id = member.config?.cloneOf
+    if (id) grouped.set(id, [...(grouped.get(id) ?? []), member])
+  }
+  const activeEntries = channel.roster?.filter(e => grouped.has(e.id)) ?? []
+  const candidateEntries = channel.roster?.filter(e => !grouped.has(e.id)) ?? []
+  const renderAgent = (m: AgentMember) => (
+    <AgentRow
+      key={m.id}
+      member={m}
+      assignment={team ? undefined : (channel.roles?.[m.id] ?? '')}
+      lead={channel.lead === m.id}
+      queued={memberLoad(channel, m).queued}
+      dirPeers={(m.sharesDirWith ?? []).filter(n => n !== m.name && agents.some(a => a.name === n))}
+      copyName={copyNameOf(m)}
+      onDuplicate={config => setDialog({ kind: 'agent', editing: null, from: config })}
+      channelId={channel.id}
+      live={live}
+      team={team}
+      canRemoveOthers={live && owner}
+      readOnly={archived}
+      onPolicy={(member, policy) =>
+        policy === 'team'
+          ? setDialog({ kind: 'policy', member })
+          : policy === 'listed'
+            ? setDialog({ kind: 'listed', member })
+            : void channelActions.setAgentPolicy(channel.id, member.id, policy).catch(policyFailed)
+      }
+      onOpenSession={onOpenSession}
+      onEdit={config => setDialog({ kind: 'agent', editing: config })}
+      onRemove={member => setDialog({ kind: 'remove', member })}
+    />
+  )
+  const renderEntry = (entry: RosterEntry) => (
+    <div key={entry.id} className="flex flex-col gap-1 rounded-md border border-line-subtle p-2">
+      <div className="flex items-center gap-1">
+        <strong className="min-w-0 flex-1 truncate text-list">{entry.config.name}</strong>
+        {!archived && live && (
+          <>
+            <IconButton
+              label={tr('channels.members.addClone')}
+              icon={UserPlus}
+              size={24}
+              onClick={() => void channelActions.adjustRoster(channel.id, entry.id, 'add').catch(policyFailed)}
+            />
+            <IconButton
+              label={tr('channels.members.edit')}
+              icon={Pencil}
+              size={24}
+              onClick={() => setDialog({ kind: 'definition', entry })}
+            />
+            {!grouped.has(entry.id) && (
+              <IconButton
+                label={tr('channels.roster.delete')}
+                icon={Trash2}
+                size={24}
+                onClick={() => setDeleteEntry(entry)}
+              />
+            )}
+          </>
+        )}
+      </div>
+      <span className="text-meta text-fg-muted">
+        {[entry.config.engine, entry.config.settings.model, entry.config.instructions].filter(Boolean).join(' · ')}
+      </span>
+      {grouped.get(entry.id)?.map(renderAgent)}
+    </div>
+  )
   return (
     <aside
       aria-label={tr('channels.members.title')}
@@ -861,7 +940,10 @@ export function ChannelMembers({
                 {editing && live && (
                   <button
                     type="button"
-                    onClick={() => setDialog({ kind: 'agent', editing })}
+                    onClick={() => {
+                      const entry = channel.roster?.find(e => e.id === editing.cloneOf)
+                      setDialog(entry ? { kind: 'definition', entry } : { kind: 'agent', editing })
+                    }}
                     className="press shrink-0 font-medium underline-offset-2 hover:underline"
                   >
                     {tr('channels.members.changeDir')}
@@ -871,36 +953,11 @@ export function ChannelMembers({
             )
           })}
           <div className="flex flex-col gap-1.5">
-            {agents
-              .filter(a => !a.config?.cloneOf)
-              .flatMap(a => [a, ...agents.filter(clone => clone.config?.cloneOf === a.id)])
-              .map(m => (
-                <AgentRow
-                  key={m.id}
-                  member={m}
-                  assignment={team ? undefined : (channel.roles?.[m.id] ?? '')}
-                  lead={channel.lead === m.id}
-                  queued={memberLoad(channel, m).queued}
-                  dirPeers={(m.sharesDirWith ?? []).filter(n => n !== m.name && agents.some(a => a.name === n))}
-                  copyName={copyNameOf(m)}
-                  onDuplicate={config => setDialog({ kind: 'agent', editing: null, from: config })}
-                  channelId={channel.id}
-                  live={live}
-                  team={team}
-                  canRemoveOthers={live && owner}
-                  readOnly={archived}
-                  onPolicy={(member, policy) =>
-                    policy === 'team'
-                      ? setDialog({ kind: 'policy', member })
-                      : policy === 'listed'
-                        ? setDialog({ kind: 'listed', member })
-                        : void channelActions.setAgentPolicy(channel.id, member.id, policy).catch(policyFailed)
-                  }
-                  onOpenSession={onOpenSession}
-                  onEdit={config => setDialog({ kind: 'agent', editing: config })}
-                  onRemove={member => setDialog({ kind: 'remove', member })}
-                />
-              ))}
+            {agents.filter(m => !channel.roster?.some(e => e.id === m.config?.cloneOf)).map(renderAgent)}
+            {activeEntries.map(renderEntry)}
+            {candidateEntries.length > 0 && (
+              <Section title={tr('channels.roster.candidates')}>{candidateEntries.map(renderEntry)}</Section>
+            )}
           </div>
         </Section>
         {!team && !archived && leadOptions.length > 0 && (
@@ -1050,6 +1107,34 @@ export function ChannelMembers({
             confirm(() => channelActions.setAgentPolicy(channel.id, dialog.member.id, 'listed', allow))
           }
           onCancel={() => setDialog(null)}
+        />
+      )}
+      {deleteEntry && (
+        <ConfirmDialog
+          title={tr('channels.roster.delete')}
+          description={deleteEntry.config.name}
+          confirmLabel={tr('channels.preset.deleteConfirm')}
+          cancelLabel={tr('channels.dialog.cancel')}
+          busy={false}
+          danger
+          onCancel={() => setDeleteEntry(null)}
+          onConfirm={() =>
+            void channelActions
+              .editDefinition(channel.id, deleteEntry.id, null)
+              .then(() => setDeleteEntry(null), policyFailed)
+          }
+        />
+      )}
+      {dialog?.kind === 'definition' && (
+        <AgentDialog
+          editing={null}
+          others={[]}
+          onClose={() => setDialog(null)}
+          template={{
+            config: dialog.entry.config,
+            names: channel.roster?.map(e => e.config.name) ?? [],
+            save: config => channelActions.editDefinition(channel.id, dialog.entry.id, config),
+          }}
         />
       )}
       {dialog?.kind === 'agent' && (
