@@ -89,13 +89,40 @@ jobs:
         shell: bash
         working-directory: apps/desktop
         run: node -e "require('node-pty'); console.log('node-pty ok')"
+      - name: 构建应用并检查命令行
+        working-directory: apps/desktop
+        run: pnpm --filter @pixelsky/cli exec node scripts/tools.mjs --release && pnpm build && pnpm --filter @pixelsky/cli smoke
+      - name: 准备 macOS 固定签名身份
+        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        env:
+          MACOS_SIGNING_CERTIFICATE: ${{ vars.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_SIGNING_PRIVATE_KEY: ${{ secrets.MACOS_SIGNING_PRIVATE_KEY }}
+        run: bash scripts/prepare-mac-signing.sh
       - name: 打包并上传到草稿 Release
         working-directory: apps/desktop
-        run: pnpm --filter @pixelsky/cli exec node scripts/tools.mjs --release && pnpm build && pnpm --filter @pixelsky/cli smoke && pnpm exec electron-builder ${{ matrix.args }} --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
+        shell: bash
+        run: |
+          signing=()
+          if [[ -n "${PIXELSKY_MAC_IDENTITY:-}" ]]; then
+            signing+=("-c.mac.identity=$PIXELSKY_MAC_IDENTITY" "-c.forceCodeSigning=true")
+          fi
+          pnpm exec electron-builder ${{ matrix.args }} "${signing[@]}" --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 没有 Apple 开发者证书：不去钥匙串里找，只做 ad-hoc 签名（electron-builder.yml 的 mac.identity）
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: 核对两个 macOS 安装包的应用签名
+        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        working-directory: apps/desktop
+        shell: bash
+        run: |
+          for arch in x64 arm64; do
+            app_dir="$(mktemp -d "$RUNNER_TEMP/pixelsky-verify.XXXXXX")"
+            ditto -x -k "release/PixelSky-${GITHUB_REF_NAME#v}-mac-$arch.zip" "$app_dir"
+            app="$app_dir/像素星空.app"
+            codesign --verify --deep --strict "$app"
+            codesign --verify -R="identifier \"com.pixelsky.desktop\" and certificate leaf = H\"$PIXELSKY_MAC_IDENTITY\"" "$app"
+            codesign -d -r- "$app"
+          done
       - name: 试打包的安装包
         if: github.ref_type != 'tag'
         uses: actions/upload-artifact@v4
