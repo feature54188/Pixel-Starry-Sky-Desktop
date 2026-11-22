@@ -7,6 +7,11 @@ on:
   push:
     tags: ['v99.*']
   workflow_dispatch:
+    inputs:
+      macos_tag:
+        description: 补打已有草稿 Release 的 macOS 安装包（如 v99.8.22-beta）
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -62,19 +67,26 @@ jobs:
       # 一个系统打包失败不影响其他系统的上传，草稿里少了的到 Actions 页重跑那一个
       fail-fast: false
       matrix:
-        include:
-          # 安装版 + latest.yml
-          - os: windows-latest
-            args: --win
-          # Intel 和 Apple 芯片一起打：分开打的话两边各传一份 latest-mac.yml，后传的会盖掉先传的
-          - os: macos-latest
-            args: --mac --x64 --arm64
-          # AppImage（能自动更新）+ deb + latest-linux.yml
-          - os: ubuntu-latest
-            args: --linux
+        os: ${{ fromJSON(inputs.macos_tag && '["macos-latest"]' || '["windows-latest","macos-latest","ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+      - name: 取对应标签的应用源码
+        if: inputs.macos_tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.macos_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$GITHUB_REF" == refs/heads/main && "$RELEASE_TAG" =~ ^v99\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
+          [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" == true ]]
+          # 使用当前工作流的签名脚本和固定公钥；打包输入来自发布标签。
+          mkdir -p "$RUNNER_TEMP/sign-tools/scripts" "$RUNNER_TEMP/sign-tools/apps/desktop/build"
+          cp scripts/prepare-mac-signing.sh "$RUNNER_TEMP/sign-tools/scripts/"
+          cp apps/desktop/build/macos-signing.pem "$RUNNER_TEMP/sign-tools/apps/desktop/build/"
+          git fetch --no-tags --depth=1 origin "refs/tags/$RELEASE_TAG"
+          git checkout --detach FETCH_HEAD
+          [[ "v$(node -p "require('./apps/desktop/package.json').version")" == "$RELEASE_TAG" ]]
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v5
         with:
@@ -93,11 +105,14 @@ jobs:
         working-directory: apps/desktop
         run: pnpm --filter @pixelsky/cli exec node scripts/tools.mjs --release && pnpm build && pnpm --filter @pixelsky/cli smoke
       - name: 准备 macOS 固定签名身份
-        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        if: runner.os == 'macOS' && (github.ref_type == 'tag' || inputs.macos_tag)
         env:
-          MACOS_SIGNING_CERTIFICATE: ${{ vars.MACOS_SIGNING_CERTIFICATE }}
           MACOS_SIGNING_PRIVATE_KEY: ${{ secrets.MACOS_SIGNING_PRIVATE_KEY }}
-        run: bash scripts/prepare-mac-signing.sh
+          REPACK: ${{ inputs.macos_tag }}
+        run: |
+          script=scripts/prepare-mac-signing.sh
+          if [[ -n "$REPACK" ]]; then script="$RUNNER_TEMP/sign-tools/$script"; fi
+          bash "$script"
       - name: 打包并上传到草稿 Release
         working-directory: apps/desktop
         shell: bash
@@ -106,25 +121,42 @@ jobs:
           if [[ -n "${PIXELSKY_MAC_IDENTITY:-}" ]]; then
             signing+=("-c.mac.identity=$PIXELSKY_MAC_IDENTITY" "-c.forceCodeSigning=true")
           fi
-          pnpm exec electron-builder ${{ matrix.args }} "${signing[@]}" --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
+          case "$RUNNER_OS" in
+            macOS) targets=(--mac --x64 --arm64) ;;
+            Windows) targets=(--win) ;;
+            Linux) targets=(--linux) ;;
+          esac
+          pnpm exec electron-builder "${targets[@]}" "${signing[@]}" --publish ${{ github.ref_type == 'tag' && 'always' || 'never' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: 核对两个 macOS 安装包的应用签名
-        if: runner.os == 'macOS' && github.ref_type == 'tag'
+        if: runner.os == 'macOS' && (github.ref_type == 'tag' || inputs.macos_tag)
         working-directory: apps/desktop
         shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.macos_tag || github.ref_name }}
         run: |
           for arch in x64 arm64; do
             app_dir="$(mktemp -d "$RUNNER_TEMP/pixelsky-verify.XXXXXX")"
-            ditto -x -k "release/PixelSky-${GITHUB_REF_NAME#v}-mac-$arch.zip" "$app_dir"
+            ditto -x -k "release/PixelSky-${RELEASE_TAG#v}-mac-$arch.zip" "$app_dir"
             app="$app_dir/像素星空.app"
             codesign --verify --deep --strict "$app"
             codesign --verify -R="identifier \"com.pixelsky.desktop\" and certificate leaf = H\"$PIXELSKY_MAC_IDENTITY\"" "$app"
             codesign -d -r- "$app"
           done
+      - name: 上传补打的 macOS 安装包
+        if: inputs.macos_tag
+        working-directory: apps/desktop/release
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.macos_tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          [[ "$(gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft)" == true ]]
+          gh release upload "$RELEASE_TAG" ./*.dmg ./*.zip ./*.blockmap ./latest-mac.yml --clobber
       - name: 试打包的安装包
-        if: github.ref_type != 'tag'
+        if: github.ref_type != 'tag' && !inputs.macos_tag
         uses: actions/upload-artifact@v4
         with:
           name: pixelsky-${{ runner.os }}
