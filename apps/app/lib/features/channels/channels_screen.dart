@@ -1,6 +1,6 @@
 // 手机看频道（第三批 C5，docs/mobile-app.md §15.6）：频道列表 → 时间线（成员头像、任务卡状态、图片点开看），
 // 任务卡里的会话点了跳到会话页。第四批（§16.2）：团队频道按团队分组、团队收件箱、同意 / 拒绝队友派的活；
-// 还不能发消息。
+// 新版电脑同时提供频道发言、讨论串和流程卡。
 import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
@@ -17,6 +17,9 @@ import '../../ui/theme/tokens.dart';
 import '../../ui/theme/type.dart';
 import '../../ui/widgets.dart';
 import '../session/session_screen.dart';
+import '../session/approval_card.dart';
+import 'channel_flow_card.dart';
+import 'channel_composer.dart';
 import 'inbox_screen.dart';
 import '../settings/log_screen.dart' show showErrorSnack;
 
@@ -215,21 +218,6 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
                         ),
                       for (final ch in g.channels) _row(ch),
                     ],
-                    if (list.channels.isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Text(
-                          L(
-                            '手机上能看、能同意队友派的活 · 发消息请在电脑上',
-                            'View and approve teammates’ requests here — post on the computer',
-                          ),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: Fs.meta,
-                            color: c.textMuted,
-                          ),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -343,9 +331,11 @@ class ChannelScreen extends StatefulWidget {
     required this.deviceId,
     required this.initialChannel,
     required this.channels,
+    this.threadId,
   });
   final String deviceId;
   final ChannelSummary initialChannel;
+  final String? threadId;
   final ChannelList channels;
 
   ChannelSummary get channel =>
@@ -434,6 +424,7 @@ class ChannelRosterScreen extends StatelessWidget {
 
 class _ChannelScreenState extends State<ChannelScreen> {
   ChannelTimeline? _timeline;
+  ChannelEntry? _quote;
   final _scroll = ScrollController();
 
   @override
@@ -453,6 +444,7 @@ class _ChannelScreenState extends State<ChannelScreen> {
       AppScope.read(context).connections,
       widget.deviceId,
       widget.channel.id,
+      threadId: widget.threadId,
     );
   }
 
@@ -470,7 +462,9 @@ class _ChannelScreenState extends State<ChannelScreen> {
     return ListenableBuilder(
       listenable: Listenable.merge([t, widget.channels]),
       builder: (context, _) => AppScreen(
-        title: widget.channel.name,
+        title: widget.threadId == null
+            ? widget.channel.name
+            : L('讨论串', 'Thread'),
         trailing: [
           if (widget.channel.json['roster'] != null)
             RoundIconButton(
@@ -508,9 +502,21 @@ class _ChannelScreenState extends State<ChannelScreen> {
                 reverse: true,
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
                 children: [
-                  for (final e in t.entries.reversed)
+                  for (final e in [
+                    ...t.entries.reversed,
+                    if (t.root != null) t.root!,
+                  ])
                     _Entry(
+                      key: ValueKey(e.id),
                       entry: e,
+                      timeline: t,
+                      canAct: t.canAct && !widget.channel.archived,
+                      onReply:
+                          !t.interactive ||
+                              widget.threadId != null ||
+                              (widget.channel.team && !t.canAct)
+                          ? null
+                          : () => _reply(e),
                       members: widget.channels.members,
                       onImage: (i) => _openImage(t, e, i),
                       onSession: (id) =>
@@ -526,18 +532,57 @@ class _ChannelScreenState extends State<ChannelScreen> {
                     ),
                 ],
               ),
-        bottom: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-          color: c.bgSubtle,
-          child: Text(
-            L(
-              '手机上还不能发消息 · 请在电脑上',
-              "You can't post from the phone yet — use the computer",
-            ),
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: Fs.meta, color: c.textMuted),
-          ),
+        bottom: t.interactive && !widget.channel.archived
+            ? ChannelComposer(
+                canAct: t.canAct,
+                members: [
+                  for (final id in widget.channel.memberIds)
+                    ?widget.channels.members[id],
+                ],
+                quote: _quote,
+                inThread: widget.threadId != null,
+                clearQuote: () => setState(() => _quote = null),
+                send: (text) async {
+                  await t.post(text, replyTo: _quote?.id);
+                  if (mounted) setState(() => _quote = null);
+                },
+              )
+            : Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  vertical: 10,
+                  horizontal: 16,
+                ),
+                color: c.bgSubtle,
+                child: Text(
+                  widget.channel.archived
+                      ? L('频道已归档', 'Channel archived')
+                      : !t.loaded
+                      ? ''
+                      : L(
+                          '更新电脑版即可在频道发消息',
+                          'Update the desktop app to post here',
+                        ),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: Fs.meta, color: c.textMuted),
+                ),
+              ),
+      ),
+    );
+  }
+
+  void _reply(ChannelEntry e) {
+    if (widget.channel.team) {
+      setState(() => _quote = e);
+      return;
+    }
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ChannelScreen(
+          deviceId: widget.deviceId,
+          initialChannel: widget.channel,
+          channels: widget.channels,
+          threadId: e.id,
         ),
       ),
     );
@@ -617,13 +662,20 @@ String eventText(ChannelEntry e, Map<String, ChannelMember> members) {
 
 class _Entry extends StatelessWidget {
   const _Entry({
+    super.key,
     required this.entry,
+    required this.timeline,
+    required this.canAct,
+    required this.onReply,
     required this.members,
     required this.onImage,
     required this.onSession,
     required this.onApprove,
   });
   final ChannelEntry entry;
+  final ChannelTimeline timeline;
+  final bool canAct;
+  final VoidCallback? onReply;
   final Map<String, ChannelMember> members;
   final void Function(int index) onImage;
   final void Function(String sessionId) onSession;
@@ -681,7 +733,20 @@ class _Entry extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 if (e.kind == 'task')
-                  _TaskCard(e, onSession: onSession, onApprove: onApprove)
+                  _TaskCard(
+                    e,
+                    onSession: onSession,
+                    onApprove: onApprove,
+                    canAct: canAct,
+                  )
+                else if (objOrNull(e.json['flow']) case final flow?)
+                  ChannelFlowCard(
+                    entry: e,
+                    flow: flow,
+                    members: members,
+                    timeline: timeline,
+                    canAct: canAct,
+                  )
                 else ...[
                   if (e.text.isNotEmpty)
                     e.markdown
@@ -723,6 +788,23 @@ class _Entry extends StatelessWidget {
                       ],
                     ),
                 ],
+                if (objOrNull(e.json['request']) case final request?)
+                  ApprovalCard(
+                    key: ValueKey(request['requestId']),
+                    request: Approval(request),
+                    canAct: canAct,
+                    onAnswer: (decision) => SessionActions(
+                      AppScope.read(context).connections,
+                      timeline.deviceId,
+                      e.sessionId!,
+                    ).answer(Approval(request).requestId, decision),
+                  ),
+                if (onReply != null)
+                  TextButton.icon(
+                    onPressed: onReply,
+                    icon: const Icon(Icons.reply, size: 16),
+                    label: Text(L('回复', 'Reply')),
+                  ),
               ],
             ),
           ),
@@ -735,10 +817,12 @@ class _Entry extends StatelessWidget {
 class _TaskCard extends StatelessWidget {
   const _TaskCard(
     this.task, {
+    required this.canAct,
     required this.onSession,
     required this.onApprove,
   });
   final ChannelEntry task;
+  final bool canAct;
   final void Function(String sessionId) onSession;
   final Future<void> Function(bool yes) onApprove;
 
@@ -815,9 +899,11 @@ class _TaskCard extends StatelessWidget {
               ),
             ),
           // 队友派来、等我同意的（§16.2）：直接点；别的「等确认」还在电脑上处理
-          if (task.canApprove)
+          if (str(task.json['decision']) case final decision?) Text(decision),
+          if (task.canApprove && canAct)
             ApproveButtons(onAnswer: onApprove)
-          else if (task.status == 'waiting' || task.status == 'approval')
+          else if ((task.status == 'waiting' && task.json['request'] == null) ||
+              task.status == 'approval')
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(

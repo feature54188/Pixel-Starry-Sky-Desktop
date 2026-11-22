@@ -1,5 +1,5 @@
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FrameType,
   Initiator,
@@ -858,8 +858,29 @@ describe('MobileGateway calls', () => {
       },
       attachments: () => ({ images: [picture('big'.repeat(IMAGE_INLINE))], files: [] }) as never,
     }
+    const flow = {
+      title: '分工',
+      status: 'draft',
+      rev: 2,
+      questions: [{ q: '范围？', options: ['桌面'] }],
+      steps: [
+        { id: 'step', title: '实施', status: 'asking', deps: [], memberId: 'a1', question: { text: '颜色？', at: 3 } },
+      ],
+    }
+    const plan = msg('plan', { flow })
+    const post = vi.fn(async (_id: string, input: { text: string }) => ({ message: msg('posted', input) }))
+    const flowAction = vi.fn(async () => ({ messageId: 'plan' }))
+    const interactive = {
+      ...channels,
+      post,
+      flowAction,
+      discussionPage: (_id: string, thread: string | null) =>
+        thread
+          ? { root: thread === 'plan' ? plan : messages[0], messages: [messages[1]], more: false }
+          : { messages: [...messages.filter(m => m !== messages[1]), plan], more: false },
+    }
     const t = setup({
-      local: { defaultEngine: () => 'codex', search: async () => ({}) as never, channels: () => channels },
+      local: { defaultEngine: () => 'codex', search: async () => ({}) as never, channels: () => interactive },
       shrinkImage: image => ({ ...image, dataBase64: 'small' }),
     })
     gateways.push(t.gateway)
@@ -906,6 +927,32 @@ describe('MobileGateway calls', () => {
     await expect(p.call('channelMessages', 'nope')).rejects.toThrow('MOBILE_NOT_FOUND')
     expect(await p.call('channelImage', 'c1', 'm1', 0)).toMatchObject({ dataBase64: 'small' })
 
+    const actions = (op: string, ...args: unknown[]) => p.call('channelFlow', 'c1', 'plan', op, ...args)
+    await expect(p.call('channelPost', 'c1', '@开发 开始', 'same-id', 'm1')).rejects.toThrow('MOBILE_FORBIDDEN')
+    await expect(actions('start', 2)).rejects.toThrow('MOBILE_FORBIDDEN')
+    const chat = (await p.call('channelMessages', 'c1', null, null, true)) as { messages: object[] }
+    expect(chat.messages.at(-1)).toMatchObject({
+      flow: { title: '分工', steps: [{ memberId: 'a1', question: { at: 3 } }] },
+    })
+    expect(await p.call('channelMessages', 'c1', null, null, true, 'm1')).toMatchObject({
+      root: { id: 'm1' },
+      messages: [{ id: 'm2', threadId: 'm1' }],
+    })
+    t.devices[0].access = 'act'
+    await p.call('channelPost', 'c1', '@开发 开始', 'same-id', 'm1')
+    expect(post).toHaveBeenLastCalledWith('c1', { text: '@开发 开始', clientId: 'same-id', threadId: 'm1' })
+    await p.call('channelPost', 'team1', '回复', 'id-2', 'task1')
+    expect(post).toHaveBeenLastCalledWith('team1', { text: '回复', clientId: 'id-2', replyToId: 'task1' })
+    await actions('answers', ['桌面'], ['范围？'])
+    expect(flowAction).toHaveBeenLastCalledWith('c1', { type: 'answers', messageId: 'plan', answers: ['桌面'] })
+    await actions('answer', 'step', '蓝色', 3)
+    await actions('start', 2)
+    expect(flowAction).toHaveBeenCalledTimes(3)
+    await expect(actions('answer', 'step', '蓝色', 2)).rejects.toThrow('已更新')
+    await expect(actions('answers', ['桌面'], ['过期的问题'])).rejects.toThrow('已更新')
+    await expect(actions('start', 1)).rejects.toThrow('已更新')
+    await expect(actions('stop')).rejects.toThrow('MOBILE_BAD_ARGUMENT')
+    expect(flowAction).toHaveBeenCalledTimes(3)
     // 新消息只推给开着这个频道的手机；关了就不推
     t.gateway.hostEvent('channels:message', [{ channelId: 'c1', message: msg('m3') }])
     await wait(20)

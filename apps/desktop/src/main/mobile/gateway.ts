@@ -7,7 +7,7 @@
 //   工具（Git / 文件 / 产物 / 任务）和加项目也由网关放行（PHONE_TOOLS、directories、addProject，§18.4）；
 //   反馈（feedback:*，FEEDBACK_ACCESS，docs/mobile-app.md §8.5）转给电脑的设置 › 反馈，令牌不离开电脑；
 //   PR（prs、prFix、prMerge…，PR_ACCESS，docs/mobile-app.md §15.4）转给电脑的 session-status，让 AI 修的文字由电脑拼；
-//   频道只读（channels、channelMessages、channelImage，CHANNEL_METHODS，§15.6）：只给本机频道，正文截短、图片按需取；
+//   频道按手机权限开放发言和计划问答；时间线、讨论串及图片供查看。
 //   AI 审查结果（reviews、reviewItem、reviewFix，REVIEW_ACCESS，§15.5）：存在电脑主进程，修的文字由电脑拼；
 //   充值（store、checkout*，CHECKOUT_ACCESS，§15.13）：借电脑的账号下单，令牌不离开电脑，支付链接不写日志。
 import { randomUUID } from 'node:crypto'
@@ -74,6 +74,7 @@ import type {
   ChannelAttachments,
   ChannelMember,
   ChannelMessage,
+  PostInput,
   TeamInboxItem,
   TeamInboxPatch,
 } from '../../shared/types/channels'
@@ -212,6 +213,14 @@ export interface PhoneChannels {
   }
   patchInbox?(teamId: string, key: string, patch: TeamInboxPatch): Promise<void>
   approveTask?(taskId: string, approve: boolean): Promise<void>
+  post?(channelId: string, input: PostInput): Promise<{ message: ChannelMessage }>
+  flowAction?(channelId: string, action: unknown): Promise<{ messageId: string }>
+  discussionPage?(
+    channelId: string,
+    threadId: string | null,
+    before?: number | null,
+    beforeId?: string | null,
+  ): { messages: ChannelMessage[]; more: boolean; root?: ChannelMessage }
   page(
     channelId: string,
     before?: number | null,
@@ -303,6 +312,8 @@ interface Peer {
   prSent?: Map<string, string>
   /** 手机开着的频道（channelMessages 时记下，channelUnwatch 清掉）：新消息只推这个 */
   openChannel?: string | null
+  interactiveChannel?: boolean
+  channelSelfId?: string
   pendingChars?: number
   flushTimer?: ReturnType<typeof setTimeout>
 }
@@ -555,6 +566,8 @@ export const CHANNEL_METHODS = new Set([
   'channels',
   'channelMessages',
   'channelImage',
+  'channelPost',
+  'channelFlow',
   'channelUnwatch',
   'teamInbox',
   'teamInboxPatch',
@@ -587,7 +600,11 @@ export function phoneMember(m: ChannelMember): Record<string, unknown> {
 }
 
 /** 手机看的一条频道消息：只留时间线要画的；讨论串里的、流程卡不给（手机第一版不画） */
-export function phoneChannelMessage(m: ChannelMessage, selfId: string | null = null): Record<string, unknown> | null {
+export function phoneChannelMessage(
+  m: ChannelMessage,
+  selfId: string | null = null,
+  interactive = false,
+): Record<string, unknown> | null {
   const base = { id: m.id, at: m.at }
   if (m.kind === 'event')
     return {
@@ -611,12 +628,30 @@ export function phoneChannelMessage(m: ChannelMessage, selfId: string | null = n
       diff: m.diff ?? null,
       error: cut(m.error, 300),
       decision: cut(m.decision, 300),
+      ...(interactive &&
+      m.status === 'waiting' &&
+      m.sessionId &&
+      (!m.ownerId || m.ownerId === selfId) &&
+      (m.request?.kind === 'question' || m.request?.kind === 'plan')
+        ? {
+            request: {
+              requestId: m.request.requestId,
+              kind: m.request.kind,
+              title: m.request.title,
+              questions: m.request.questions,
+              plan: cut(m.request.plan, CHANNEL_TEXT_LIMIT * 4),
+              canAllow: m.request.canAllow,
+              canDeny: m.request.canDeny,
+            },
+          }
+        : {}),
       // 团队卡（§16.2）：失败原因代码（手机换成文字）、跑过几次、等同意时我能不能点（同电脑 teamModel.canApprove）
       reason: m.reason ?? null,
       runs: m.runs?.length ?? 0,
       canApprove: m.status === 'approval' && !!selfId && m.ownerId === selfId,
     }
-  if (m.threadId || m.flow) return null
+  if (!interactive && (m.threadId || m.flow)) return null
+  const flow = interactive ? m.flow : null
   return {
     ...base,
     kind: 'message',
@@ -624,6 +659,26 @@ export function phoneChannelMessage(m: ChannelMessage, selfId: string | null = n
     text: cut(m.text, CHANNEL_TEXT_LIMIT),
     format: m.format,
     taskId: m.taskId ?? null,
+    ...(interactive ? { threadId: m.threadId ?? null, replyToId: m.replyToId ?? null } : {}),
+    ...(flow
+      ? {
+          flow: {
+            title: flow.title,
+            status: flow.status,
+            rev: flow.rev ?? 0,
+            brief: flow.brief,
+            questions: flow.questions,
+            steps: flow.steps.map(s => ({
+              id: s.id,
+              title: s.title,
+              memberId: s.memberId,
+              status: s.status,
+              deps: s.deps,
+              question: s.question,
+            })),
+          },
+        }
+      : {}),
     images: (m.attached?.images ?? []).length,
     files: (m.attached?.files ?? []).map(f => f.name),
   }
@@ -1768,7 +1823,7 @@ export class MobileGateway {
     return null
   }
 
-  /** 频道只读：本机频道的列表、时间线、图片 */
+  /** 频道列表、时间线和图片；频道发言、流程操作沿用电脑的服务。 */
   private async channels(peer: Peer, access: MobileAccess, method: string, args: unknown[]): Promise<unknown> {
     if (method === 'channelUnwatch') {
       if (peer.openChannel === args[0]) peer.openChannel = null
@@ -1840,18 +1895,91 @@ export class MobileGateway {
       }
     }
     const id = asString(args[0])
-    if (!visible.some(ch => ch.id === id)) throw new Error('MOBILE_NOT_FOUND')
+    const ch = visible.find(channel => channel.id === id)
+    if (!ch) throw new Error('MOBILE_NOT_FOUND')
+    if (method === 'channelPost' || method === 'channelFlow') {
+      if (access !== 'act') throw new Error('MOBILE_FORBIDDEN')
+      if (ch.archivedAt) throw new Error('频道已归档')
+      if (method === 'channelPost') {
+        if (!c.post) throw new Error('MOBILE_UNSUPPORTED')
+        const text = asString(args[1], 16000)
+        const clientId = asString(args[2], 100)
+        const target = args[3] == null ? null : asString(args[3])
+        if (target && ch.scope === 'local') {
+          if (!c.discussionPage) throw new Error('MOBILE_UNSUPPORTED')
+          c.discussionPage(id, target)
+        }
+        const posted = await c.post(id, {
+          text,
+          clientId,
+          ...(target ? (ch.scope === 'team' ? { replyToId: target } : { threadId: target }) : {}),
+        })
+        return phoneChannelMessage(posted.message, state.self.id, true)
+      }
+      if (ch.scope !== 'local' || !c.flowAction || !c.discussionPage) throw new Error('MOBILE_UNSUPPORTED')
+      const messageId = asString(args[1])
+      const root = c.discussionPage(id, messageId).root
+      const flow = root?.kind === 'message' && root.id === messageId ? root.flow : null
+      if (!flow) throw new Error('MOBILE_NOT_FOUND')
+      switch (args[2]) {
+        case 'answers': {
+          const questions = flow.questions ?? []
+          if (JSON.stringify(args[4]) !== JSON.stringify(questions.map(q => q.q))) throw new Error('计划的问题已更新')
+          if (!Array.isArray(args[3]) || args[3].length !== questions.length) throw new Error('MOBILE_BAD_ARGUMENT')
+          return c.flowAction(id, { type: 'answers', messageId, answers: args[3].map(a => asString(a, 4000)) })
+        }
+        case 'answer': {
+          const stepId = asString(args[3])
+          const step = flow.steps.find(s => s.id === stepId)
+          if (!step?.question || step.question.at !== args[5]) throw new Error('步骤的问题已更新')
+          return c.flowAction(id, { type: 'answer', messageId, stepId, text: asString(args[4], 4000) })
+        }
+        case 'briefAnswer': {
+          const question = asString(args[3], 500)
+          const answer = asString(args[4], 500).trim()
+          const brief = flow.brief
+          if (!answer) throw new Error('MOBILE_BAD_ARGUMENT')
+          if ((flow.rev ?? 0) !== args[5]) throw new Error('计划已更新')
+          if (!brief?.open.some(q => q.q === question)) throw new Error('这个问题已处理')
+          return c.flowAction(id, {
+            type: 'update',
+            messageId,
+            brief: {
+              ...brief,
+              facts: [...brief.facts, { k: question, v: answer, by: state.self.id }],
+              open: brief.open.filter(q => q.q !== question),
+            },
+          })
+        }
+        case 'start':
+          if ((flow.rev ?? 0) !== args[3]) throw new Error('计划已更新')
+          return c.flowAction(id, { type: 'start', messageId })
+        default:
+          throw new Error('MOBILE_BAD_ARGUMENT')
+      }
+    }
     if (method === 'channelMessages') {
       const before = typeof args[1] === 'number' ? args[1] : null
       const beforeId = typeof args[2] === 'string' ? args[2] : null
-      const page = await c.page(id, before, beforeId)
+      const interactive = args[3] === true && !!c.post
+      const threadId = args[4] == null ? null : asString(args[4])
+      if (threadId && (!interactive || ch.scope !== 'local' || !c.discussionPage)) throw new Error('MOBILE_UNSUPPORTED')
+      const page =
+        interactive && ch.scope === 'local' && c.discussionPage
+          ? c.discussionPage(id, threadId, before, beforeId)
+          : await c.page(id, before, beforeId)
       peer.openChannel = id
-      // 这个频道里的「我」（团队频道是我在这个团队的成员 id，同电脑 selfIdIn）
-      const ch = visible.find(x => x.id === id)
+      peer.interactiveChannel = interactive
+      // 团队频道里用人在团队里的成员 id。
       const selfId =
         state.members.find(m => m.kind === 'human' && m.you && !!ch?.memberIds.includes(m.id))?.id ?? state.self.id
+      peer.channelSelfId = selfId
       return {
-        messages: page.messages.map(m => phoneChannelMessage(m, selfId)).filter(m => m !== null),
+        interactive,
+        ...('root' in page && page.root
+          ? { root: phoneChannelMessage(page.root as ChannelMessage, selfId, interactive) }
+          : {}),
+        messages: page.messages.map(m => phoneChannelMessage(m, selfId, interactive)).filter(m => m !== null),
         more: page.more,
         selfId,
       }
@@ -2040,11 +2168,12 @@ export class MobileGateway {
     // 频道（docs/mobile-app.md §15.6）：新消息只推给开着那个频道的手机；列表变了合并节流后告诉所有手机重取
     if (channel === 'channels:message') {
       const v = args[0] as { channelId?: unknown; message?: ChannelMessage } | undefined
-      const message = v?.message ? phoneChannelMessage(v.message) : null
-      if (!message) return
-      for (const peer of this.peers.values())
-        if (peer.openChannel === v?.channelId)
-          peer.rpc.event('channels:message', { kind: 'channelMessage', channelId: v?.channelId, message })
+      if (!v?.message) return
+      for (const peer of this.peers.values()) {
+        if (peer.openChannel !== v.channelId) continue
+        const message = phoneChannelMessage(v.message, peer.channelSelfId, peer.interactiveChannel)
+        if (message) peer.rpc.event('channels:message', { kind: 'channelMessage', channelId: v.channelId, message })
+      }
       return
     }
     if (channel === 'channels:changed') {

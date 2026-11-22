@@ -141,13 +141,15 @@ class _ApprovalCardState extends State<ApprovalCard> {
             ],
             Row(
               children: [
-                Expanded(
-                  child: _Pill(
-                    label: L('不回答', "Don't answer"),
-                    onTap: off ? null : () => _answer({'type': 'deny'}),
+                if (r.canDeny) ...[
+                  Expanded(
+                    child: _Pill(
+                      label: L('不回答', "Don't answer"),
+                      onTap: off ? null : () => _answer({'type': 'deny'}),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
+                ],
                 Expanded(
                   flex: 2,
                   child: _Pill(

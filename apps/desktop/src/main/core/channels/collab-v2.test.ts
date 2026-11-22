@@ -386,6 +386,11 @@ describe('讨论串（§3）', () => {
     const result = texts(c, ch).find(m => m.taskId === card.id && !m.threadId)!
     const onResult = await c.post(ch, { text: '结果收到', threadId: result.id, clientId: '6' })
     expect(onResult.message.threadId).toBe(card.id)
+    const thread = c.discussionPage(ch, result.id)
+    expect(thread.root?.id).toBe(card.id)
+    expect(thread.messages.map(m => m.id)).toContain(onResult.message.id)
+    expect(c.discussionPage(ch, null).messages.map(m => m.id)).not.toContain(onResult.message.id)
+    expect(() => c.discussionPage(ch, 'missing')).toThrow('讨论串不存在')
     // 别处来的串 id 不认
     const stray = await c.post(ch, { text: '随便说一句', threadId: 'nope', clientId: '5' })
     expect(stray.message.threadId).toBeUndefined()

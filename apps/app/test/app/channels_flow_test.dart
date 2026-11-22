@@ -16,6 +16,7 @@ import 'package:pixelsky_app/data/team_inbox.dart';
 import 'package:pixelsky_app/demo/demo.dart';
 import 'package:pixelsky_app/platform/notifier.dart';
 import 'package:pixelsky_app/features/channels/channels_screen.dart';
+import 'package:pixelsky_app/features/channels/channel_flow_card.dart';
 import 'package:pixelsky_app/ui/theme/theme.dart';
 
 ChannelEntry _e(String id, num at, [String status = 'done']) =>
@@ -54,7 +55,82 @@ class _RosterList extends ChannelList {
   }
 }
 
+class _FlowTimeline extends ChannelTimeline {
+  _FlowTimeline(Connections connections) : super(connections, 'pc', 'c');
+  final calls = <List<Object?>>[];
+  @override
+  Future<void> flow(String messageId, List<Object?> args) async {
+    calls.add([messageId, ...args]);
+  }
+}
+
 void main() {
+  testWidgets('频道计划显示负责人，按题序提交答案，按版本开工', (tester) async {
+    final connections = Connections(
+      store: MemoryPairingStore(),
+      connect: (_, _) => throw StateError('unexpected connection'),
+    );
+    final timeline = _FlowTimeline(connections);
+    final questions = [
+      {
+        'q': '目标平台？',
+        'options': ['手机'],
+      },
+    ];
+    final steps = [
+      {'id': 'one', 'memberId': 'dev', 'title': '实现频道', 'status': 'pending'},
+    ];
+    Future<void> show(Map<String, Object?> flow, {bool canAct = true}) =>
+        tester.pumpWidget(
+          MaterialApp(
+            theme: buildTheme(Brightness.light),
+            home: Scaffold(
+              body: ListView(
+                children: [
+                  ChannelFlowCard(
+                    entry: _e('plan', 1),
+                    flow: flow,
+                    timeline: timeline,
+                    canAct: canAct,
+                    members: {
+                      'dev': ChannelMember({'name': '前端'}),
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+    final draft = {
+      'title': '开发计划',
+      'rev': 2,
+      'status': 'draft',
+      'steps': steps,
+    };
+    await show({...draft, 'questions': questions});
+    expect(find.text('前端 · 待开始'), findsOneWidget);
+    expect(find.text('不回答'), findsNothing);
+    await tester.tap(find.text('手机'));
+    await tester.pump();
+    await tester.ensureVisible(find.text('提交回答'));
+    await tester.tap(find.text('提交回答'));
+    await tester.pump();
+    expect(timeline.calls.single, [
+      'plan',
+      'answers',
+      ['手机'],
+      ['目标平台？'],
+    ]);
+    await show(draft, canAct: false);
+    expect(find.text('按计划开工'), findsNothing);
+    await show(draft);
+    await tester.tap(find.text('按计划开工'));
+    await tester.pump();
+    expect(timeline.calls.last, ['plan', 'start', 2]);
+    await tester.pumpWidget(const SizedBox());
+    timeline.dispose();
+    connections.dispose();
+  });
   testWidgets('手机成员页显示候选，打开期间跟随电脑的分身改名', (tester) async {
     final connections = Connections(
       store: MemoryPairingStore(),
@@ -150,8 +226,41 @@ void main() {
     await until(() => find.text('任务 · 拆分登录页').evaluate().isNotEmpty, '时间线');
     expect(find.text('完成'), findsOneWidget);
     expect(find.text('等你确认'), findsOneWidget);
-    expect(find.text('手机上还不能发消息 · 请在电脑上'), findsWidgets);
+    await tester.tap(find.byTooltip('提及成员'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Codex'));
+    await tester.pumpAndSettle();
+    final input = find.byType(TextField);
+    expect(tester.widget<TextField>(input).controller!.text, '@Codex ');
+    await tester.enterText(input, '@Codex 检查频道');
+    await tester.tap(find.byTooltip('发送'));
+    await until(
+      () =>
+          tester.widget<TextField>(input).controller!.text.isEmpty &&
+          find.text('@Codex 检查频道').evaluate().isNotEmpty,
+      '发出频道消息',
+    );
+    await tester.tap(find.widgetWithText(TextButton, '回复').first);
+    await until(() => find.text('回复讨论串').evaluate().isNotEmpty, '打开讨论串');
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '补充说明');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await until(
+      () =>
+          tester
+              .widget<TextField>(find.byType(TextField))
+              .controller!
+              .text
+              .isEmpty &&
+          find.text('补充说明').evaluate().isNotEmpty,
+      '讨论串内回复',
+    );
+    await tester.tap(find.byTooltip('返回').first);
+    await tester.pumpAndSettle();
+    expect(find.text('补充说明'), findsNothing);
     await tester.pump(const Duration(seconds: 1));
+    await tester.ensureVisible(find.text('打开会话 ›'));
     await tester.tap(find.text('打开会话 ›'));
     await until(() => find.text(L10n.title1).evaluate().isNotEmpty, '打开了会话');
 

@@ -884,6 +884,31 @@ export class Channels {
   ): { messages: ChannelMessage[]; more: boolean } {
     const list = this.store.messages.get(channelId)
     if (!list) throw new Error('频道不存在')
+    return this.messagePage(list, before, beforeId)
+  }
+
+  /** 手机主时间线和讨论串各自分页，串里的回复与桌面使用同一条归属规则。 */
+  discussionPage(
+    channelId: string,
+    threadId: string | null,
+    before?: number | null,
+    beforeId?: string | null,
+  ): { messages: ChannelMessage[]; more: boolean; root?: ChannelMessage } {
+    const list = this.store.messages.get(channelId)
+    if (!list) throw new Error('频道不存在')
+    if (!threadId)
+      return this.messagePage(
+        list.filter(m => m.kind !== 'message' || !m.threadId),
+        before,
+        beforeId,
+      )
+    const rootId = this.threadRoot(channelId, threadId)
+    const root = list.find(m => m.id === rootId)
+    if (!root || !rootId) throw new Error('讨论串不存在')
+    return { ...this.messagePage(threadMessages(list, rootId), before, beforeId), root }
+  }
+
+  private messagePage(list: ChannelMessage[], before?: number | null, beforeId?: string | null) {
     const at = beforeId ? list.findIndex(m => m.id === beforeId) : -1
     const end = at >= 0 ? at : before == null ? list.length : list.findIndex(m => m.at >= before)
     const stop = end < 0 ? list.length : end

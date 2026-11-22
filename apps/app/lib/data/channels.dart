@@ -1,4 +1,4 @@
-// 手机看频道（第三批 C5，docs/mobile-app.md §15.6，只读）：网关的 channels（列表、成员）、channelMessages（时间线分页）、
+// 手机频道：网关的 channels（列表、成员）、channelMessages（频道或讨论串分页）、
 // channelImage（一张图）；电脑推 channels:changed（{kind: 'channels'}，重取列表）和 channels:message
 // （{kind: 'channelMessage', channelId, message}，开着的那个频道的新消息、任务卡状态变化，按 id 替换）。
 import 'dart:async';
@@ -9,6 +9,7 @@ import '../connection/connections.dart';
 import '../connection/desktop_link.dart';
 import '../i18n/i18n.dart';
 import '../protocol/json.dart';
+import 'retry.dart';
 
 /// 频道成员（人或 AI）
 extension type ChannelMember(Json json) implements Json {
@@ -224,7 +225,12 @@ class ChannelList extends ChangeNotifier {
 
 /// 一个频道的时间线：最近一页，往上翻取更早的；开着时电脑推新的
 class ChannelTimeline extends ChangeNotifier {
-  ChannelTimeline(this._connections, this.deviceId, this.channelId) {
+  ChannelTimeline(
+    this._connections,
+    this.deviceId,
+    this.channelId, {
+    this.threadId,
+  }) {
     _connections.addListener(_check);
     _events = _connections.events.listen(_onEvent);
     _check();
@@ -233,6 +239,12 @@ class ChannelTimeline extends ChangeNotifier {
   final Connections _connections;
   final String deviceId;
   final String channelId;
+  final String? threadId;
+  ChannelEntry? root;
+  bool interactive = false;
+  bool get canAct =>
+      _link?.state == LinkState.ready && _link?.hello?.access == 'act';
+  SendAttempt? _attempt;
   late final StreamSubscription<DesktopEvent> _events;
   LinkState? _state;
   bool _disposed = false;
@@ -250,14 +262,26 @@ class ChannelTimeline extends ChangeNotifier {
     if (state == _state) return;
     _state = state;
     if (state == LinkState.ready) _load();
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> _load() async {
     final link = _link;
     if (link == null) return;
     try {
-      final r = obj(await link.call('channelMessages', [channelId]));
+      final r = obj(
+        await link.call('channelMessages', [
+          channelId,
+          null,
+          null,
+          true,
+          threadId,
+        ]),
+      );
       if (_disposed) return;
+      interactive = r['interactive'] == true;
+      final parent = objOrNull(r['root']);
+      root = parent == null ? null : ChannelEntry(parent);
       entries = [for (final m in objList(r['messages'])) ChannelEntry(m)];
       more = r['more'] == true;
       error = null;
@@ -277,7 +301,13 @@ class ChannelTimeline extends ChangeNotifier {
     try {
       final first = entries.first;
       final r = obj(
-        await link.call('channelMessages', [channelId, first.at, first.id]),
+        await link.call('channelMessages', [
+          channelId,
+          first.at,
+          first.id,
+          true,
+          threadId,
+        ]),
       );
       if (_disposed) return;
       final known = {for (final e in entries) e.id};
@@ -303,8 +333,52 @@ class ChannelTimeline extends ChangeNotifier {
     }
     final m = objOrNull(data!['message']);
     if (m == null) return;
-    entries = mergeEntry(entries, ChannelEntry(m));
+    _receive(ChannelEntry(m));
+  }
+
+  void _receive(ChannelEntry m) {
+    if (_disposed) return;
+    if (threadId == null) {
+      if (m.json['threadId'] != null) return;
+    } else {
+      final parent = root?.id ?? threadId;
+      if (m.id == parent) {
+        root = m;
+        notifyListeners();
+        return;
+      }
+      final related =
+          m.json['threadId'] ?? m.json['taskId'] ?? m.json['replyToId'];
+      if (related != parent &&
+          !entries.any((e) => e.json['taskId'] == parent && e.id == related)) {
+        return;
+      }
+    }
+    entries = mergeEntry(entries, m);
     notifyListeners();
+  }
+
+  Future<void> post(String text, {String? replyTo}) async {
+    final link = _link;
+    if (link == null) throw const LinkNotReady();
+    final target = replyTo ?? root?.id ?? threadId;
+    final attempt = attemptFor(
+      _attempt,
+      sendKey(channelId, text, [?target]),
+      uuid,
+    );
+    _attempt = attempt;
+    final response = obj(
+      await link.call('channelPost', [channelId, text, attempt.id, target]),
+    );
+    _receive(ChannelEntry(response));
+    if (identical(_attempt, attempt)) _attempt = null;
+  }
+
+  Future<void> flow(String messageId, List<Object?> args) async {
+    final link = _link;
+    if (link == null) throw const LinkNotReady();
+    await link.call('channelFlow', [channelId, messageId, ...args]);
   }
 
   /// 同意 / 拒绝队友派的活（§16.2）：电脑转给云端，云端再核对一次还在不在等；成功后重取这一页
@@ -327,7 +401,9 @@ class ChannelTimeline extends ChangeNotifier {
     _disposed = true;
     _connections.removeListener(_check);
     _events.cancel();
-    _link?.call('channelUnwatch', [channelId]).catchError((Object _) => null);
+    if (threadId == null) {
+      _link?.call('channelUnwatch', [channelId]).catchError((Object _) => null);
+    }
     super.dispose();
   }
 }

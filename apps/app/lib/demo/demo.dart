@@ -122,6 +122,7 @@ class DemoDesktop {
   /// 团队演示的状态：收件箱（能标已读、归档）、答过的任务卡
   List<Json> _inbox = [for (final i in L10n.teamInbox) obj(_recent(i))];
   final _approved = <String, bool>{};
+  final _channelPosts = <String, Map<String, Json>>{};
   int _ids = 0;
   String _id(String p) => '$p${++_ids}';
   int get _now => DateTime.now().millisecondsSinceEpoch;
@@ -619,7 +620,23 @@ class DemoDesktop {
       // 频道（docs/mobile-app.md §15.6，只读）：一个本机频道，三个成员、一张完成的任务卡、一张等你确认的
       case 'channels':
         return _recent(L10n.channels);
+      case 'channelPost':
+        final posts = _channelPosts.putIfAbsent(id, () => {});
+        final target = args.length > 3 ? args[3] : null;
+        return posts.putIfAbsent(
+          args[2] as String,
+          () => {
+            'id': args[2],
+            'kind': 'message',
+            'at': DateTime.now().millisecondsSinceEpoch,
+            'text': args[1],
+            'authorId': id == 'tc1' ? 'u1' : 'me',
+            'format': 'plain',
+            (id == 'tc1' ? 'replyToId' : 'threadId'): ?target,
+          },
+        );
       case 'channelMessages':
+        final posts = _channelPosts[id]?.values ?? const <Json>[];
         if (id == 'tc1') {
           return {
             'messages': [
@@ -631,13 +648,23 @@ class DemoDesktop {
                         'canApprove': false,
                       }
                     : m,
+              ...posts,
             ],
+            'interactive': true,
             'more': false,
             'selfId': 'u1',
           };
         }
         if (id != 'c1') throw const LinkException('MOBILE_NOT_FOUND');
-        return {'messages': _recent(L10n.channelMessages), 'more': false};
+        final messages = [...objList(_recent(L10n.channelMessages)), ...posts];
+        final threadId = args.length > 4 ? args[4] : null;
+        return {
+          'messages': messages.where((m) => m['threadId'] == threadId).toList(),
+          if (threadId != null)
+            'root': messages.where((m) => m['id'] == threadId).firstOrNull,
+          'interactive': true,
+          'more': false,
+        };
       // 团队（§16.2）：收件箱、改一行、同意 / 拒绝
       case 'teamInbox':
         return {'supported': true, 'items': _inbox};
