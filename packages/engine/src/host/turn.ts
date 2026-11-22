@@ -2,6 +2,7 @@
 import { randomUUID } from 'node:crypto'
 import type {
   ApprovalDecision,
+  ApprovalRequest,
   ContextDetailLevel,
   ContextDiagnostic,
   EngineId,
@@ -17,7 +18,7 @@ import type {
   TaskOutput,
 } from '@pixelsky/protocol'
 import { GOAL_NO_ENGINE, GOAL_NO_PROCESS, codedError, sourceKey, viaGateway } from '@pixelsky/protocol'
-import { queueSettings } from '../queue'
+import { queueSettings, sameQueueSettings } from '../queue'
 import type { EngineAdapter, EngineSession } from '../adapter'
 import type { HostContext } from './context'
 import { mergeContext } from './branch'
@@ -26,6 +27,7 @@ import { NEW_TITLE, titleFrom } from './title'
 import { reportedMode } from './plan-return'
 
 export class HostTurn {
+  private readonly answering = new Map<string, Promise<void>>()
   constructor(private readonly ctx: HostContext) {}
 
   async pump(id: string): Promise<void> {
@@ -461,10 +463,64 @@ export class HostTurn {
     return true
   }
 
-  answer(id: string, requestId: string, decision: ApprovalDecision): void {
+  answer(id: string, requestId: string, decision: ApprovalDecision): void | Promise<void> {
+    if (requestId.startsWith('codex-question-')) {
+      const rt = this.ctx.m.sessions.runtime(id)
+      const request = rt.snapshot.pending.find(r => r.requestId === requestId && r.replyAsMessage)
+      if (!request) return
+      const key = id + '/' + requestId
+      const pending = this.answering.get(key)
+      if (pending) return pending
+      const sending = this.answerMessage(id, request, decision).finally(() => this.answering.delete(key))
+      this.answering.set(key, sending)
+      return sending
+    }
     const rt = this.ctx.runtimes.get(id)
     if (!rt?.session) return
     rt.session.answer(requestId, decision)
+  }
+
+  private async answerMessage(id: string, request: ApprovalRequest, decision: ApprovalDecision): Promise<void> {
+    const { sessions, queue, events } = this.ctx.m
+    const rt = sessions.runtime(id)
+    const item = rt.snapshot.items.findLast(i => i.id === request.itemId)
+    if (item?.kind !== 'assistant' || item.pendingQuestion?.requestId !== request.requestId) return
+    const turnId = rt.snapshot.turnId
+    let queueId: string | undefined
+    if (decision.type === 'answer') {
+      const lines = (request.questions ?? []).map(q => {
+        const value = decision.answers[q.answerKey ?? q.question] ?? decision.answers[q.question]
+        if (typeof value !== 'string' || !value.trim()) throw new Error('请先回答所有问题')
+        return q.question + '\n' + value
+      })
+      const settings = { ...queueSettings(rt.execution ?? rt.snapshot.record), engine: 'codex' as const }
+      const receipt = await queue.send(id, {
+        text: ['我的回答', ...lines].join('\n\n'),
+        clientMessageId: request.requestId,
+        settings,
+      })
+      queueId = receipt.queueId
+    } else if (decision.type !== 'deny') {
+      throw new Error('这条提问需要回答或跳过')
+    }
+    // 答案已进入持久队列，重连或从另一台设备再次提交不会重复发送。
+    const { pendingQuestion: _answered, ...history } = item
+    events.apply(id, { type: 'item_completed', item: history })
+    events.apply(id, { type: 'approval_resolved', requestId: request.requestId })
+    events.broadcastSessions()
+    const queued = rt.snapshot.queue.find(q => q.id === queueId)
+    if (
+      queued?.status === 'queued' &&
+      turnId &&
+      rt.snapshot.turnId === turnId &&
+      rt.snapshot.state === 'running' &&
+      rt.snapshot.flags.steerAvailable &&
+      !rt.stopping &&
+      !rt.snapshot.queuePaused &&
+      sameQueueSettings(queued.settings, queueSettings(rt.execution ?? rt.snapshot.record))
+    ) {
+      await queue.steerQueued(id, queued.id, turnId)
+    }
   }
 
   async approveReview(id: string, itemId: string): Promise<void> {

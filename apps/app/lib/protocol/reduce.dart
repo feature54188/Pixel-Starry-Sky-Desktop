@@ -16,7 +16,7 @@ Json emptySnapshot(Json record, [List<Json> items = const []]) => {
   'context': null,
   'state': 'idle',
   'items': List<Json>.of(items),
-  'pending': const <Json>[],
+  'pending': _messageQuestions(items),
   'usage': null,
   'flags': emptyFlags,
   'tasks': const <Object?>[],
@@ -29,6 +29,21 @@ Json emptySnapshot(Json record, [List<Json> items = const []]) => {
   'turnId': null,
   'retry': null,
   'compaction': null,
+};
+
+List<Json> _messageQuestions(List<Json> items) => [
+  for (final item in items)
+    if (item['kind'] == 'assistant' && item['pendingQuestion'] is Map)
+      obj(item['pendingQuestion']),
+];
+
+Json _replaceItems(Json s, List<Json> items) => {
+  ...s,
+  'items': items,
+  'pending': [
+    ...objList(s['pending']).where((r) => r['replyAsMessage'] != true),
+    ..._messageQuestions(items),
+  ],
 };
 
 /// 一轮结束时把还在跑的条目收尾；后台子智能体的工具不跟着这一轮结束
@@ -153,9 +168,9 @@ Json reduce(Json s, Json e) {
     case 'items_truncated':
       final items = _items(s);
       final i = _indexOfId(items, e['fromItemId'] as String);
-      return i < 0 ? s : {...s, 'items': items.sublist(0, i)};
+      return i < 0 ? s : _replaceItems(s, items.sublist(0, i));
     case 'items_reset':
-      return {...s, 'items': e['items']};
+      return _replaceItems(s, objList(e['items']));
     case 'item_started':
     case 'item_completed':
       return {...s, 'items': _upsert(_items(s), Item(obj(e['item'])))};
@@ -242,7 +257,9 @@ Json reduce(Json s, Json e) {
         'retry': null,
         'compaction': null,
         'execution': null,
-        'pending': const <Json>[],
+        'pending': objList(s['pending'])
+            .where((r) => r['replyAsMessage'] == true)
+            .toList(),
         'items': changed ? settled : s['items'],
       };
   }

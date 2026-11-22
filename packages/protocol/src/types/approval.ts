@@ -19,6 +19,8 @@ export interface Question {
 }
 
 export interface ApprovalRequest {
+  /** Codex 的异步消息提问，答复作为用户消息发回，可在原轮次结束后回答。 */
+  replyAsMessage?: true
   /** Codex 异步提问时为 false，等待用户回答期间引擎继续运行。 */
   isBlocking?: boolean
   formSchema?: unknown

@@ -650,8 +650,8 @@ export class EngineHost {
     return this.m.queue.steerQueued(id, queueId, expectedTurnId)
   }
 
-  answer(id: string, requestId: string, decision: ApprovalDecision): void {
-    this.m.turn.answer(id, requestId, decision)
+  answer(id: string, requestId: string, decision: ApprovalDecision): void | Promise<void> {
+    return this.m.turn.answer(id, requestId, decision)
   }
 
   approveReview(id: string, itemId: string): Promise<void> {

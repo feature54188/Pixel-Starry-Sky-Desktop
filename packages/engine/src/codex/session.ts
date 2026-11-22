@@ -1,5 +1,5 @@
 import { GenTimer } from '../genTimer'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type {
@@ -1608,6 +1608,57 @@ export class CodexSession implements EngineSession {
       )
     } else if (method === 'item/started' || method === 'item/completed') {
       const item = object(params.item)
+      if (this.options.askQuestions && item.type === 'agentMessage' && item.delivery === 'async' && string(item.id)) {
+        const questions = array(item.questions).flatMap((value, index) => {
+          const raw = object(value)
+          const title = string(raw.title)
+          if (!title.trim()) return []
+          return [
+            {
+              answerKey: 'q' + (index + 1),
+              header: '',
+              question: title,
+              multiSelect: false,
+              allowOther: true,
+              options: array(raw.options)
+                .filter((label): label is string => typeof label === 'string')
+                .map(label => ({ label, description: '' })),
+            },
+          ]
+        })
+        if (questions.length) {
+          if (method === 'item/completed') {
+            const itemId = 'cx-' + string(item.id)
+            const key = createHash('sha256')
+              .update(JSON.stringify([eventThread, eventTurn, item.id]))
+              .digest('hex')
+            const request: ApprovalRequest = {
+              requestId: 'codex-question-' + key,
+              itemId,
+              kind: 'question',
+              title: 'Codex question',
+              isBlocking: false,
+              replyAsMessage: true,
+              questions,
+              alwaysScopes: [],
+            }
+            this.active.activity = true
+            this.clearRetry()
+            this.ctx.emit({
+              type: 'item_completed',
+              item: {
+                kind: 'assistant',
+                id: itemId,
+                status: 'completed',
+                text: string(item.text) || questions.map(q => q.question).join('\n'),
+                pendingQuestion: request,
+              },
+            })
+            this.ctx.emit({ type: 'approval_request', request })
+          }
+          return
+        }
+      }
       if (item.type === 'userMessage') {
         const id = string(item.clientId || item.clientUserMessageId),
           pending = this.guidance.get(id)

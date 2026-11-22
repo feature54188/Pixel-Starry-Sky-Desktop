@@ -816,6 +816,20 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         return
       }
       if (p.collaborationMode?.mode) collaborationMode = p.collaborationMode.mode
+      if (text.startsWith('async-card')) {
+        const item = {
+          type: 'agentMessage',
+          id: 'call_async',
+          delivery: 'async',
+          phase: 'final_answer',
+          text: 'Choose a value?\n- Blue\n- Green\nChoose a value?',
+          questions: [{ title: 'Choose a value?', options: ['Blue', 'Green'] }, { title: 'Choose a value?' }],
+        }
+        emit('item/started', { threadId: thread, turnId: id, item })
+        emit('item/completed', { threadId: thread, turnId: id, item })
+        if (text !== 'async-card-live') finish()
+        return
+      }
       if (text.includes('提问') && (collaborationMode === 'plan' || defaultModeAsk)) {
         // 计划协作模式下模型才有 request_user_input；开了 default_mode_request_user_input 时 Default 模式也有
         pending = 'ask'

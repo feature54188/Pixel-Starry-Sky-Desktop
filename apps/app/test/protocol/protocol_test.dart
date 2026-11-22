@@ -72,6 +72,31 @@ void main() {
       });
     }
 
+    test('异步问题跨轮保留，重新打开、回退和重做时跟随对应的消息', () {
+      final request = {'requestId': 'q', 'replyAsMessage': true};
+      final item = {
+        'id': 'a',
+        'kind': 'assistant',
+        'status': 'completed',
+        'pendingQuestion': request,
+      };
+      var s = emptySnapshot({'id': 's'}, [item]);
+      expect(s['pending'], [request]);
+      s = reduce(s, {
+        'type': 'approval_request',
+        'request': {'requestId': 'rpc', 'isBlocking': false},
+      });
+      s = reduce(s, {'type': 'turn_completed', 'outcome': 'completed'});
+      expect(s['pending'], [request]);
+      s = reduce(s, {'type': 'items_truncated', 'fromItemId': 'a'});
+      expect(s['pending'], isEmpty);
+      s = reduce(s, {
+        'type': 'items_reset',
+        'items': [item],
+      });
+      expect(s['pending'], [request]);
+    });
+
     test('不修改传入的快照', () {
       final start = emptySnapshot({'id': 's'});
       final before = jsonEncode(start);

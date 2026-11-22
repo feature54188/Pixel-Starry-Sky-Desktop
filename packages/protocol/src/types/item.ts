@@ -1,4 +1,5 @@
 import type { EngineId } from './base'
+import type { ApprovalRequest } from './approval'
 import type { FileAttachment, ImageAttachment, TurnOutcome } from './session'
 import type { TurnUsage } from './usage'
 
@@ -155,7 +156,7 @@ type ItemVariant =
       source?: 'tui'
     }
   /** 助手回复，Markdown */
-  | { kind: 'assistant'; id: string; text: string; status: ItemStatus }
+  | { kind: 'assistant'; id: string; text: string; status: ItemStatus; pendingQuestion?: ApprovalRequest }
   /**
    * 思考过程，界面默认折叠。durationMs：引擎算好的思考用时（Codex 的思考条目要等想完才发，界面自己计时只有 0 秒）；
    * 没有时界面按亲眼看到的运行时间算

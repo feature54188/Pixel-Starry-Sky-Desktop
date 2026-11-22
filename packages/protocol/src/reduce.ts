@@ -16,7 +16,7 @@ export function emptySnapshot(record: SessionRecord, items: Item[] = []): Sessio
     context: null,
     state: 'idle',
     items,
-    pending: [],
+    pending: messageQuestions(items),
     usage: null,
     flags: EMPTY_FLAGS,
     tasks: [],
@@ -30,6 +30,14 @@ export function emptySnapshot(record: SessionRecord, items: Item[] = []): Sessio
     retry: null,
     compaction: null,
   }
+}
+
+function messageQuestions(items: Item[]) {
+  return items.flatMap(i => (i.kind === 'assistant' && i.pendingQuestion ? [i.pendingQuestion] : []))
+}
+
+function replaceItems(s: SessionSnapshot, items: Item[]): SessionSnapshot {
+  return { ...s, items, pending: [...s.pending.filter(r => !r.replyAsMessage), ...messageQuestions(items)] }
 }
 
 /** 一轮异常结束时，还在进行中的条目统一改成这个状态 */
@@ -114,10 +122,10 @@ export function reduce(s: SessionSnapshot, e: EngineEvent): SessionSnapshot {
       return s
     case 'items_truncated': {
       const i = indexOfId(s.items, e.fromItemId)
-      return i < 0 ? s : { ...s, items: s.items.slice(0, i) }
+      return i < 0 ? s : replaceItems(s, s.items.slice(0, i))
     }
     case 'items_reset':
-      return { ...s, items: e.items }
+      return replaceItems(s, e.items)
     case 'item_started':
     case 'item_completed':
       return { ...s, items: upsert(s.items, e.item) }
@@ -178,7 +186,7 @@ export function reduce(s: SessionSnapshot, e: EngineEvent): SessionSnapshot {
         retry: null,
         compaction: null,
         execution: null,
-        pending: [],
+        pending: s.pending.filter(r => r.replyAsMessage),
         items: s.items.some(x => settle(x, status) !== x) ? s.items.map(x => settle(x, status)) : s.items,
       }
     }

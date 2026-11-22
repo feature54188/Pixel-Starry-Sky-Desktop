@@ -1171,6 +1171,74 @@ describe('Codex app-server adapter', () => {
     })
   })
 
+  it('async agentMessage：运行中的回答通过引导进入同一轮，开始和结束事件只产生一张卡', async () => {
+    const { session, messages, events } = setup()
+    await host!.send(session.id, 'async-card-live')
+    await wait(() => host!.open(session.id).pending.length === 1)
+    const request = host!.open(session.id).pending[0]
+    expect(request).toMatchObject({
+      replyAsMessage: true,
+      isBlocking: false,
+      questions: [
+        { answerKey: 'q1', question: 'Choose a value?', options: [{ label: 'Blue' }, { label: 'Green' }] },
+        { answerKey: 'q2', question: 'Choose a value?', options: [] },
+      ],
+    })
+    expect(events.filter(e => e.kind === 'session' && e.event.type === 'approval_request')).toHaveLength(1)
+    const decision = { type: 'answer' as const, answers: { q1: 'Blue', q2: 'Custom' } }
+    await Promise.all([
+      host!.answer(session.id, request.requestId, decision),
+      host!.answer(session.id, request.requestId, decision),
+    ])
+    expect(messages().filter(m => m.method === 'turn/steer')).toMatchObject([
+      {
+        params: {
+          input: [{ type: 'text', text: '我的回答\n\nChoose a value?\nBlue\n\nChoose a value?\nCustom' }],
+        },
+      },
+    ])
+    expect(host!.open(session.id).pending).toHaveLength(0)
+    await host!.interrupt(session.id)
+  })
+
+  it('async agentMessage：轮次结束及宿主重启后仍可提交，答复只开一轮', async () => {
+    const { session, messages } = setup()
+    await host!.send(session.id, 'async-card')
+    await wait(() => host!.open(session.id).state === 'idle' && host!.open(session.id).pending.length === 1)
+    const request = host!.open(session.id).pending[0]
+    await host!.shutdown()
+    setup()
+    expect(host!.open(session.id).pending).toEqual([request])
+    await expect(
+      host!.answer(session.id, request.requestId, { type: 'answer', answers: { q1: 'Blue' } }),
+    ).rejects.toThrow('请先回答所有问题')
+    await host!.answer(session.id, request.requestId, { type: 'answer', answers: { q1: 'Blue', q2: 'Custom' } })
+    await wait(
+      () => messages().filter(m => m.method === 'turn/start').length === 2 && host!.open(session.id).state === 'idle',
+    )
+    expect(messages().filter(m => m.method === 'turn/start')[1].params.input[0].text).toBe(
+      '我的回答\n\nChoose a value?\nBlue\n\nChoose a value?\nCustom',
+    )
+    await host!.shutdown()
+    setup()
+    expect(host!.open(session.id).pending).toHaveLength(0)
+  })
+
+  it('async agentMessage：跳过不发送新消息，关闭提问时还可阅读原文', async () => {
+    const { session, messages } = setup()
+    await host!.send(session.id, 'async-card')
+    await wait(() => host!.open(session.id).state === 'idle' && host!.open(session.id).pending.length === 1)
+    await host!.answer(session.id, host!.open(session.id).pending[0].requestId, { type: 'deny' })
+    expect(host!.open(session.id).pending).toHaveLength(0)
+    expect(messages().filter(m => m.method === 'turn/start')).toHaveLength(1)
+    await fresh()
+    const off = setup(50, { askQuestions: false }).session
+    await host!.send(off.id, 'async-card')
+    await wait(() => host!.open(off.id).items.some(i => i.kind === 'turn_stats'))
+    expect(host!.open(off.id).pending).toHaveLength(0)
+    expect(host!.open(off.id).items.some(i => i.kind === 'assistant' && i.text.includes('Choose a value?'))).toBe(true)
+  })
+
   it('允许提问时打开 Default 模式提问：启动带开关，第一轮带一次 default 拿提问指令，非计划模式也弹问题卡', async () => {
     const { session, messages, launches } = setup()
     await host!.send(session.id, '提问')
