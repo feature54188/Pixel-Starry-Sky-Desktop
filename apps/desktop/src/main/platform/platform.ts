@@ -207,7 +207,7 @@ export async function validateQueuedInput(record: SessionRecord, providers: Prov
 
 /** 线路的模型列表，压缩换模型时核对用；缓存 5 分钟，读不到当作空（不换模型） */
 const routeModelCache = new Map<string, { at: number; models: Promise<string[]> }>()
-function routeModels(groupId: string): Promise<string[]> {
+export function routeModels(groupId: string): Promise<string[]> {
   const hit = routeModelCache.get(groupId)
   if (hit && Date.now() - hit.at < 5 * 60_000) return hit.models
   const models = jsonRequest(`/v1/platform/groups/${groupId}/models`, 'POST')

@@ -20,8 +20,8 @@ export const settingsReorgMessages = {
   'settingsEngines.shared': { zh: '所有引擎通用', en: 'All engines' },
   'settingsEngines.autoReviewModel': { zh: '自动审核模型', en: 'Automatic review model' },
   'settingsEngines.autoReviewModelHint': {
-    zh: 'Codex、Claude Code、内置 Pi、Antigravity 和应用内代码审查共用此设置。留空时，Claude Code、Pi 和 Antigravity 的工具审批交给你确认。',
-    en: 'Codex, Claude Code, built-in Pi, Antigravity, and in-app code reviews share this setting. Leave it empty to handle tool approvals for Claude Code, Pi, and Antigravity yourself.',
+    zh: '各引擎与应用内代码审查共用此设置。在「自动审核」模式下，选择「默认」时 Claude Code 使用会话线路的模型审核工具请求；Pi 和 Antigravity 交给你确认。本机 Claude 会话指定 GPT 审核模型时，使用本机 Codex 登录。',
+    en: 'Engines and in-app code reviews share this setting. In automatic review mode, Default uses the Claude session’s model route to review tools. Pi and Antigravity ask you. A GPT reviewer selected for a local Claude session uses the local Codex login.',
   },
   'settingsEngines.autoReviewModelDefault': { zh: '默认', en: 'Default' },
   'settingsEngines.autoReviewKeywords': {

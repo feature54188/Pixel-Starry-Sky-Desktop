@@ -821,6 +821,7 @@ describe('EngineHost + Claude（假引擎）', () => {
     expect(reviewApproval).toHaveBeenCalledExactlyOnceWith(
       expect.objectContaining({ id, permissionMode: 'auto' }),
       expect.objectContaining({ kind: 'file_change' }),
+      '写文件',
     )
     expect(host.open(id).items[1]).toMatchObject({
       kind: 'file_change',

@@ -292,9 +292,9 @@ export class HostTurn {
       record: () => ({ ...m.sessions.runtime(id).snapshot.record, ...(m.sessions.runtime(id).execution ?? {}) }),
       reviewApproval: request => {
         const review = this.ctx.opts.reviewApproval
-        return review
-          ? review({ ...m.sessions.runtime(id).snapshot.record, ...(m.sessions.runtime(id).execution ?? {}) }, request)
-          : Promise.resolve(null)
+        if (!review) return Promise.resolve(null)
+        const task = rt.snapshot.queue.find(q => q.id === rt.activeId)?.text ?? ''
+        return review({ ...rt.snapshot.record, ...(rt.execution ?? {}) }, request, task)
       },
       emit: e => m.events.onEngineEvent(id, e),
       runs: () => rt.snapshot.runs,
